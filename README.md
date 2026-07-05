@@ -1,4 +1,4 @@
-# AISafetyBenchExplorer Web -- Phase 1 & 2
+# AISafetyBenchExplorer Web
 
 Admin CRUD web application for the AISafetyBenchExplorer AI safety
 benchmark catalogue. Contains Phase 1 (PostgreSQL schema, FastAPI
