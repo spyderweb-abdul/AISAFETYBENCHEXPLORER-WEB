@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Environment secrets
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+*.log
+npm-debug.log*
+
+# Docker
+*.pid
+
+# Database
+*.sqlite3
+pgdata/
+postgres-data/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Excel / output artifacts (project-specific)
+outputs/
+batch_results/
+*.tmp
