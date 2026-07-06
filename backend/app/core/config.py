@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     OLLAMA_NATIVE_URL: str = ""
     OLLAMA_API_KEY: str = ""
 
+    SEMANTIC_SCHOLAR_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
 

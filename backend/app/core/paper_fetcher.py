@@ -211,15 +211,38 @@ def fetch_pdf_url(pdf_url: str) -> dict[str, str]:
         return {"source": "pdf", "url": pdf_url, "fetch_ok": False, "error": str(exc)}
 
 
-def fetch_semantic_scholar_citation_count(title_or_doi: str) -> int | None:
-    """Best-effort citation count lookup by title or DOI search."""
-    try:
-        resp = httpx.get(
+def fetch_semantic_scholar_citation_count(title_or_doi: str, api_key: str = "") -> int | None:
+    """Best-effort citation count lookup by title or DOI search.
+
+    Passing api_key raises Semantic Scholar's unauthenticated rate limit
+    (1 request/second, frequent 429s) to the much higher authenticated tier.
+    Get a free key at https://www.semanticscholar.org/product/api.
+
+    If the key is rejected (403 -- "the API key you've sent is incorrect",
+    per Semantic Scholar's own FAQ), automatically retries once without any
+    key, falling back to the public unauthenticated tier rather than failing
+    the whole lookup. This keeps extraction working end-to-end even with a
+    misconfigured/not-yet-activated key.
+    """
+
+    def _do_request(use_key: bool) -> httpx.Response:
+        headers = {"x-api-key": api_key} if (use_key and api_key) else {}
+        return httpx.get(
             "https://api.semanticscholar.org/graph/v1/paper/search",
             params={"query": title_or_doi, "fields": "citationCount,title", "limit": 1},
             timeout=_HTTP_TIMEOUT,
             follow_redirects=True,
+            headers=headers,
         )
+
+    try:
+        resp = _do_request(use_key=bool(api_key))
+        if resp.status_code == 403 and api_key:
+            logger.warning(
+                "Semantic Scholar rejected API key (403) for %s; "
+                "retrying unauthenticated.", title_or_doi,
+            )
+            resp = _do_request(use_key=False)
         resp.raise_for_status()
         data = resp.json().get("data", [])
         if data:
@@ -229,22 +252,37 @@ def fetch_semantic_scholar_citation_count(title_or_doi: str) -> int | None:
     return None
 
 
-def fetch_semantic_scholar_paper(identifier: str) -> dict[str, str]:
+def fetch_semantic_scholar_paper(identifier: str, api_key: str = "") -> dict[str, str]:
     """Last-resort fallback: look up a DOI/arXiv ID/title directly on Semantic
     Scholar, which indexes far more sources than Crossref or DataCite alone
-    (it aggregates arXiv, DOI-registered venues, and many preprint servers)."""
+    (it aggregates arXiv, DOI-registered venues, and many preprint servers).
+
+    Same 403-retry-without-key fallback as fetch_semantic_scholar_citation_count.
+    """
     try:
         paper_id = identifier
         if identifier.lower().startswith(("10.", "https://doi.org/", "doi:")):
             clean = _extract_clean_doi(identifier)
             paper_id = f"DOI:{clean}"
 
-        resp = httpx.get(
-            SEMANTIC_SCHOLAR_URL.format(paper_id=paper_id),
-            params={"fields": "title,abstract,authors,year,citationCount,externalIds,openAccessPdf"},
-            timeout=_HTTP_TIMEOUT,
-            follow_redirects=True,
-        )
+        def _do_request(use_key: bool) -> httpx.Response:
+            headers = {"x-api-key": api_key} if (use_key and api_key) else {}
+            return httpx.get(
+                SEMANTIC_SCHOLAR_URL.format(paper_id=paper_id),
+                params={"fields": "title,abstract,authors,year,citationCount,externalIds,openAccessPdf"},
+                timeout=_HTTP_TIMEOUT,
+                follow_redirects=True,
+                headers=headers,
+            )
+
+        resp = _do_request(use_key=bool(api_key))
+        if resp.status_code == 403 and api_key:
+            logger.warning(
+                "Semantic Scholar rejected API key (403) for %s; "
+                "retrying unauthenticated.", identifier,
+            )
+            resp = _do_request(use_key=False)
+
         if resp.status_code == 404:
             return {"source": "semantic_scholar", "fetch_ok": False, "error": "404 not found"}
         resp.raise_for_status()
@@ -266,9 +304,14 @@ def fetch_semantic_scholar_paper(identifier: str) -> dict[str, str]:
         return {"source": "semantic_scholar", "fetch_ok": False, "error": str(exc)}
 
 
-def fetch_source(source_type: str, source_value: str) -> dict[str, str]:
+def fetch_source(source_type: str, source_value: str, semantic_scholar_api_key: str = "") -> dict[str, str]:
     """Dispatch to the correct fetcher based on source_type, with Semantic
-    Scholar as a final fallback if the primary source-specific fetch fails."""
+    Scholar as a final fallback if the primary source-specific fetch fails.
+
+    semantic_scholar_api_key, if provided, is forwarded to every Semantic
+    Scholar call to avoid the strict unauthenticated rate limit (which
+    otherwise causes frequent 429 errors under normal usage).
+    """
     if source_type == "arxiv_id":
         result = fetch_arxiv(source_value)
     elif source_type == "doi":
@@ -283,13 +326,15 @@ def fetch_source(source_type: str, source_value: str) -> dict[str, str]:
             "%s fetch failed for %s; trying Semantic Scholar as final fallback.",
             source_type, source_value,
         )
-        ss_result = fetch_semantic_scholar_paper(source_value)
+        ss_result = fetch_semantic_scholar_paper(source_value, api_key=semantic_scholar_api_key)
         if ss_result.get("fetch_ok"):
             result = ss_result
 
     if result.get("fetch_ok") and result.get("citation_count") is None:
         title_or_doi = result.get("title") or result.get("doi") or source_value
-        citation_count = fetch_semantic_scholar_citation_count(title_or_doi)
+        citation_count = fetch_semantic_scholar_citation_count(
+            title_or_doi, api_key=semantic_scholar_api_key
+        )
         if citation_count is not None:
             result["citation_count"] = citation_count
 

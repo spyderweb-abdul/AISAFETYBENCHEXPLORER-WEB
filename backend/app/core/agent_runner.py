@@ -288,7 +288,7 @@ def _call_openai(model_name: str, source_type: str, source_value: str, api_key: 
         response_format={"type": "json_object"},
         temperature=0.0,
     )
-    return json.loads(response.choices[0].message.content or "{}")
+    return json.loads(response.choices[0].message.content or "{{}}")
 
 
 def _call_anthropic(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> dict[str, Any]:
@@ -296,26 +296,107 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
 
     client = anthropic.Anthropic(api_key=api_key)
     user_msg = _build_user_message(source_type, source_value, fetched)
+
+    # Enable Anthropic's server-side web_search tool. This lets Claude
+    # autonomously issue real web searches (e.g. for "no_of_samples" details
+    # buried in a paper's body/appendix that our fetched abstract excerpt
+    # does not cover, GitHub star counts, license text, etc.) instead of
+    # relying purely on training-data recall or the short abstract we fetched
+    # ourselves in paper_fetcher.py. Anthropic executes the search server-side
+    # and returns web_search_tool_result blocks inline in the response --
+    # no extra client-side loop is needed for this tool specifically.
     message = client.messages.create(
         model=model_name,
-        max_tokens=4096,
+        # web_search results get injected into context and consume a lot of
+        # tokens before Claude produces its final JSON answer. 4096 was too
+        # low and caused stop_reason="max_tokens" truncation, so the model's
+        # response was cut off before any JSON was emitted at all (raw ended
+        # up as {} downstream). Raised to 8192 to give enough room for
+        # multiple search results plus the full structured JSON output.
+        max_tokens=8192,
         system=SYSTEM_PROMPT_STUB,
         messages=[{"role": "user", "content": user_msg}],
+        tools=[
+            {
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 5,
+            }
+        ],
+        # Note: this is Anthropic's built-in server-side tool (verified type
+        # "web_search_20250305"), not a client-side function we implement --
+        # Anthropic executes the actual search and injects results into the
+        # conversation before Claude's final text response.
     )
-    # message.content is a list of content blocks. With extended thinking
-    # enabled, Claude returns a ThinkingBlock (no .text attribute) before the
-    # actual TextBlock, so we cannot assume content[0] is the text response.
-    # Find the first block that actually has a .text attribute instead.
-    raw = ""
-    for block in message.content or []:
-        block_text = getattr(block, "text", None)
-        if block_text:
-            raw = block_text
-            break
 
-    start = raw.find("{")
-    end = raw.rfind("}") + 1
-    return json.loads(raw[start:end]) if start != -1 else {{}}
+    if message.stop_reason == "max_tokens":
+        logger.warning(
+            "Anthropic response for %s:%s was truncated (stop_reason=max_tokens). "
+            "The final JSON may be incomplete or missing entirely.",
+            source_type, source_value,
+        )
+
+    # message.content is a list of content blocks: with extended thinking
+    # and/or web_search enabled, Claude returns ThinkingBlock and
+    # ServerToolUseBlock/WebSearchToolResultBlock entries interleaved with
+    # one or more TextBlocks. Concatenate ALL text blocks (not just the
+    # last), since Claude sometimes splits its final answer across multiple
+    # text segments interspersed with tool-use blocks.
+    text_blocks = [
+        getattr(block, "text", None)
+        for block in (message.content or [])
+    ]
+    all_text = "\n".join(t for t in text_blocks if t)
+
+    logger.info(
+        "Anthropic call for %s:%s -- stop_reason=%s, %d content blocks, "
+        "%d chars of text extracted.",
+        source_type, source_value, message.stop_reason,
+        len(message.content or []), len(all_text),
+    )
+
+    parsed = _extract_last_balanced_json(all_text)
+    if parsed is None:
+        logger.warning(
+            "Could not extract valid JSON from Anthropic response for %s:%s. "
+            "Full raw text (first 3000 chars): %s",
+            source_type, source_value, all_text[:3000],
+        )
+        return {}
+    return parsed
+
+
+def _extract_last_balanced_json(text: str) -> dict[str, Any] | None:
+    """Find the LAST balanced-brace {{...}} span in text and parse it as JSON.
+
+    Naive find("{{")/rfind("}}") breaks when the text contains other brace
+    pairs before/after the real JSON object -- e.g. web_search tool results
+    often contain JSON-like snippets or code examples in their text, which
+    can make rfind("}}") match a closing brace that belongs to unrelated
+    content, producing a malformed slice. This scans for balanced brace
+    spans instead and tries the last one found (Claude's final answer is
+    expected to be the last JSON object in the response).
+    """
+    candidates = []
+    depth = 0
+    start_idx = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start_idx = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start_idx is not None:
+                    candidates.append(text[start_idx:i + 1])
+
+    for candidate in reversed(candidates):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _quality_score(data: dict[str, Any]) -> float:
@@ -337,6 +418,7 @@ def run_extraction(
     db: Session,
     openai_api_key: str = "",
     anthropic_api_key: str = "",
+    semantic_scholar_api_key: str = "",
 ) -> None:
     job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
     if job is None:
@@ -350,7 +432,7 @@ def run_extraction(
         # Phase 0.1: actually fetch the paper via a real HTTP call (arXiv API,
         # Crossref, or direct PDF download) instead of asking the model to
         # "fetch" a URL it has no tool access to reach. See paper_fetcher.py.
-        fetched = fetch_source(source_type, source_value)
+        fetched = fetch_source(source_type, source_value, semantic_scholar_api_key=semantic_scholar_api_key)
         if not fetched.get("fetch_ok"):
             logger.warning(
                 "Job %s: automated fetch failed for %s:%s -- error=%s. "

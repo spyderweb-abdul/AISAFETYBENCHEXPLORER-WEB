@@ -44,6 +44,7 @@ def submit_job(
         db=db,
         openai_api_key=settings.OPENAI_API_KEY,
         anthropic_api_key=settings.ANTHROPIC_API_KEY,
+        semantic_scholar_api_key=settings.SEMANTIC_SCHOLAR_API_KEY,
     )
     return job
 
