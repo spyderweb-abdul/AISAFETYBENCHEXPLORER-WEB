@@ -2,12 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import audit, auth, benchmarks, complexity, export, metrics, vocab
+from app.routers import audit, auth, benchmarks, complexity, export, extraction, metrics, vocab
 
 app = FastAPI(
     title="AISafetyBenchExplorer API",
-    version="0.2.0",
-    description="Phase 2: Admin CRUD, complexity auto-classification, audit logging, Excel export.",
+    version="0.3.0",
+    description="Phase 3: Agent Orchestration Layer - extraction jobs, agent runner, pending review inbox.",
 )
 
 app.add_middleware(
@@ -25,6 +25,7 @@ app.include_router(complexity.router)
 app.include_router(audit.router)
 app.include_router(export.router)
 app.include_router(vocab.router)
+app.include_router(extraction.router)
 
 
 @app.get("/health")

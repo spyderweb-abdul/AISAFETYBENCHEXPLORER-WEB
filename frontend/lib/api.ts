@@ -63,6 +63,20 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
+export interface ExtractionJob {
+  id: string;
+  source_type: string;
+  source_value: string;
+  model_used: string | null;
+  status: string;
+  quality_score: number | null;
+  requires_review: boolean;
+  result_benchmark_id: string | null;
+  submitted_by: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export async function login(email: string, password: string) {
   const form = new URLSearchParams();
   form.append("username", email);
@@ -119,4 +133,36 @@ export async function fetchAuditLog(params?: Record<string, string>) {
 
 export function exportXlsxUrl() {
   return `${API_BASE_URL}/export/xlsx`;
+}
+
+export async function submitExtractionJob(payload: {
+  source_type: string;
+  source_value: string;
+  model_used: string;
+}) {
+  const { data } = await api.post<ExtractionJob>("/extraction/jobs", payload);
+  return data;
+}
+
+export async function listExtractionJobs(statusFilter?: string) {
+  const params = statusFilter ? { status: statusFilter } : {};
+  const { data } = await api.get<ExtractionJob[]>("/extraction/jobs", { params });
+  return data;
+}
+
+export async function getExtractionJob(id: string) {
+  const { data } = await api.get<ExtractionJob>(`/extraction/jobs/${id}`);
+  return data;
+}
+
+export async function reviewExtractionJob(
+  id: string,
+  approve: boolean,
+  reviewer_note?: string
+) {
+  const { data } = await api.post<ExtractionJob>(`/extraction/jobs/${id}/review`, {
+    approve,
+    reviewer_note,
+  });
+  return data;
 }

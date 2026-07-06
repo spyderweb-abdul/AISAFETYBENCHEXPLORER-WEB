@@ -9,6 +9,15 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
+    DEFAULT_MODEL: str = "openai/gpt-4o"
+
+    OLLAMA_BASE_URL_CLOUD: str = ""
+    OLLAMA_BASE_URL_LOCAL: str = ""
+    OLLAMA_NATIVE_URL: str = ""
+    OLLAMA_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
 
