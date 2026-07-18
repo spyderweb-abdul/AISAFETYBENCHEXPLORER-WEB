@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Benchmark, getBenchmark } from "../../../../lib/api";
 import BenchmarkForm from "../../../../components/BenchmarkForm";
+import EvalMetricsPanel from "../../../../components/EvalMetricsPanel";
 
 export default function EditBenchmarkPage() {
   const params = useParams();
@@ -20,6 +21,12 @@ export default function EditBenchmarkPage() {
     <div className="container">
       <h2>Edit: {benchmark.benchmark_name}</h2>
       <BenchmarkForm initial={benchmark} benchmarkId={id} />
+      <EvalMetricsPanel
+        benchmarkId={id}
+        benchmarkName={benchmark.benchmark_name}
+        paperTitle={benchmark.benchmark_paper_title}
+        paperLink={benchmark.paper_link}
+      />
     </div>
   );
 }

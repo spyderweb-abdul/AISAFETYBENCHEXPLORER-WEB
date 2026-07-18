@@ -110,7 +110,7 @@ class ExtractionJob(Base):
     status = Column(job_status_enum, nullable=False, default="queued")
     quality_score = Column(Numeric(3, 2))
     requires_review = Column(Boolean, default=True)
-    result_benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id"))
+    result_benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id", ondelete="SET NULL"))
     submitted_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
