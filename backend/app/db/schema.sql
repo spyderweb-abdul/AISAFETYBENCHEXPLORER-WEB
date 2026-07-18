@@ -100,7 +100,7 @@ CREATE TABLE extraction_jobs (
     status job_status_enum NOT NULL DEFAULT 'queued',
     quality_score NUMERIC(3,2),
     requires_review BOOLEAN DEFAULT TRUE,
-    result_benchmark_id UUID REFERENCES benchmarks(id),
+    result_benchmark_id UUID REFERENCES benchmarks(id) ON DELETE SET NULL,
     submitted_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ

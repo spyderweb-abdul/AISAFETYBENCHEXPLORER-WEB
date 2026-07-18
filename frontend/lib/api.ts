@@ -166,3 +166,58 @@ export async function reviewExtractionJob(
   });
   return data;
 }
+
+
+export interface EvalMetric {
+  id: string;
+  benchmark_id: string;
+  benchmark_name: string;
+  paper_title: string;
+  paper_link: string | null;
+  metric_name: string;
+  conceptual_description: string | null;
+  methodological_details: string | null;
+  mathematical_definition: string | null;
+  differences_from_standard_definition: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MetricsCompleteness {
+  benchmark_id: string;
+  missing_metric_names: string[];
+  is_complete: boolean;
+}
+
+export async function listMetricsForBenchmark(benchmarkId: string) {
+  const { data } = await api.get<EvalMetric[]>(`/benchmarks/${benchmarkId}/metrics`);
+  return data;
+}
+
+export async function checkMetricsCompleteness(benchmarkId: string) {
+  const { data } = await api.get<MetricsCompleteness>(
+    `/benchmarks/${benchmarkId}/metrics/completeness`
+  );
+  return data;
+}
+
+export async function createMetric(
+  benchmarkId: string,
+  payload: Omit<EvalMetric, "id" | "benchmark_id" | "created_at" | "updated_at">
+) {
+  const { data } = await api.post<EvalMetric>(`/benchmarks/${benchmarkId}/metrics`, {
+    ...payload,
+    benchmark_id: benchmarkId,
+  });
+  return data;
+}
+
+export async function updateMetric(metricId: string, payload: Partial<EvalMetric>) {
+  const { data } = await api.patch<EvalMetric>(`/metrics/${metricId}`, payload);
+  return data;
+}
+
+export async function deleteMetric(metricId: string) {
+  await api.delete(`/metrics/${metricId}`);
+}
