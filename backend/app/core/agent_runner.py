@@ -492,10 +492,19 @@ def _persist_eval_metrics(db: Session, benchmark_id: uuid.UUID, catalogue: list[
 # offending field to fit the current column width (with an ellipsis marker)
 # BEFORE the INSERT, logs a warning so the truncation is visible/auditable,
 # and lets the job complete as "needs_review" instead of "failed".
+# 2026-07-18: no_of_samples (now TEXT) and license (now VARCHAR(300)) were
+# widened via Alembic migration 0002_widen_benchmark_text_columns after
+# StringDataRightTruncation errors on real extractions (see Known Gaps,
+# PROJECT_ROADMAP.md Section 9, item 1). Removed from this clamp list since
+# they can no longer overflow at realistic extraction lengths. The
+# remaining fields are still bounded (VARCHAR(255) or enum-backed) and
+# keep this safety net so a legitimately good extraction is never
+# discarded outright by a DB-level truncation error -- it degrades to
+# needs_review instead.
 _VARCHAR_100_FIELDS = [
-    "benchmark_name", "benchmark_paper_title", "code_dataset", "no_of_samples",
-    "created_by", "dev_purpose", "license", "complexity_level",
-    "complexity_justification", "integration_option", "code_repository",
+    "benchmark_name", "benchmark_paper_title", "code_dataset",
+    "created_by", "dev_purpose", "complexity_level",
+    "integration_option", "code_repository",
     "dataset_repository", "paper_link", "status",
 ]
 _VARCHAR_LIMIT = 100
