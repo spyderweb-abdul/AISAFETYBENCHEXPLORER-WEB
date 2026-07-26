@@ -1,11 +1,12 @@
 import uuid
-
+from datetime import datetime
 from sqlalchemy import (
     ARRAY, Boolean, Column, Date, DateTime, ForeignKey, Integer,
     Numeric, String, Text, func
 )
 from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship
+
 
 Base = declarative_base()
 
@@ -64,7 +65,6 @@ class Benchmark(Base):
     metrics = relationship("EvalMetric", back_populates="benchmark", cascade="all, delete-orphan")
     repo_stats = relationship("RepoStat", back_populates="benchmark", cascade="all, delete-orphan")
 
-
 class EvalMetric(Base):
     __tablename__ = "eval_metrics"
 
@@ -92,9 +92,21 @@ class RepoStat(Base):
     benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id", ondelete="CASCADE"), nullable=False)
     source = Column(String(20), nullable=False)
     url = Column(Text, nullable=False)
+    owner = Column(String(200), nullable=True)
+    name = Column(String(200), nullable=True)
     stars_or_likes = Column(Integer, default=0)
+    forks = Column(Integer, nullable=True)
+    open_issues = Column(Integer, nullable=True)
+    contributors_count = Column(Integer, nullable=True)
+    downloads = Column(Integer, nullable=True)
     last_commit_at = Column(DateTime(timezone=True))
+    days_since_last_activity = Column(Integer, nullable=True)
     activity_status = Column(String(30))
+    is_archived = Column(Boolean, nullable=False, default=False)
+    is_private = Column(Boolean, nullable=False, default=False)
+    is_gated = Column(Boolean, nullable=False, default=False)
+    license_id = Column(String(100), nullable=True)
+    fetch_error = Column(Text, nullable=True)
     fetched_at = Column(DateTime(timezone=True), server_default=func.now())
 
     benchmark = relationship("Benchmark", back_populates="repo_stats")
@@ -126,3 +138,4 @@ class AuditLog(Base):
     changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     diff = Column(JSONB)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+

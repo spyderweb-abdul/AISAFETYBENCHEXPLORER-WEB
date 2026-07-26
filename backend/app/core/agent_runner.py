@@ -21,11 +21,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
+from app.schemas.benchmark import BenchmarkCreate
+from app.models.orm import Benchmark, EvalMetric, ExtractionJob, RepoStat
 
 from app.core.complexity_classifier import ComplexitySignals, classify
 from app.core.paper_fetcher import fetch_source
-from app.models.orm import Benchmark, EvalMetric, ExtractionJob
-from app.schemas.benchmark import BenchmarkCreate
+from app.core.config import settings
+from app.core.github_scrapper import fetch_github_stats
+from app.core.hf_scrapper import fetch_hf_dataset_stats
 
 logger = logging.getLogger(__name__)
 
@@ -814,6 +817,55 @@ def run_extraction(
                 job_id, _truncated_fields,
             )
 
+        # --- Phase 4: deterministic GitHub/HuggingFace verification -----------
+        # Closes Known Gap 10: instead of trusting the model's own web_search
+        # recall for stars/license/activity, verify code_repository and
+        # dataset_repository (already extracted by the model above) against
+        # the real GitHub/HuggingFace APIs. Overwrite `license` with the
+        # scraper's ground truth when available, since a verified SPDX id or
+        # HF license tag is more reliable than model recall.
+        github_stats = None
+        hf_stats = None
+
+        if raw.get("code_repository"):
+            try:
+                github_stats = fetch_github_stats(raw["code_repository"], github_token=settings.GITHUB_TOKEN)
+                if github_stats.error is None:
+                    if github_stats.license_spdx:
+                        raw["license"] = github_stats.license_spdx
+                    logger.info(
+                        "Job %s: verified GitHub repo %s/%s -- stars=%d, activity=%s.",
+                        job_id, github_stats.owner, github_stats.repo,
+                        github_stats.stars, github_stats.activity_status,
+                    )
+                else:
+                    logger.warning(
+                        "Job %s: GitHub verification failed for %s: %s",
+                        job_id, raw["code_repository"], github_stats.error,
+                    )
+            except Exception as exc:
+                logger.warning("Job %s: github_scrapper raised %s -- continuing without it.", job_id, exc)
+
+        if raw.get("dataset_repository"):
+            try:
+                hf_stats = fetch_hf_dataset_stats(raw["dataset_repository"], hf_token=settings.HF_TOKEN)
+                if hf_stats.error is None:
+                    if hf_stats.license_id and not raw.get("license"):
+                        raw["license"] = hf_stats.license_id
+                    logger.info(
+                        "Job %s: verified HF dataset %s/%s -- likes=%d, activity=%s.",
+                        job_id, hf_stats.owner, hf_stats.name,
+                        hf_stats.likes, hf_stats.activity_status,
+                    )
+                else:
+                    logger.warning(
+                        "Job %s: HuggingFace verification failed for %s: %s",
+                        job_id, raw["dataset_repository"], hf_stats.error,
+                    )
+            except Exception as exc:
+                logger.warning("Job %s: hf_scrapper raised %s -- continuing without it.", job_id, exc)
+        # --- END Phase 4 block ---------------------------------------------------
+
         create_schema = BenchmarkCreate(**raw)
 
         signal_kwargs = {
@@ -844,6 +896,49 @@ def run_extraction(
             "Job %s: persisted %d eval_metrics row(s) for benchmark %s.",
             job_id, metrics_persisted, benchmark.id,
         )
+
+        # github block
+        if github_stats is not None and github_stats.error is None:
+            db.add(RepoStat(
+                id=uuid.uuid4(),
+                benchmark_id=benchmark.id,
+                source="github",
+                url=raw["code_repository"],          # fixed: no trailing comma inside brackets
+                owner=github_stats.owner,
+                name=github_stats.repo,
+                stars_or_likes=github_stats.stars,
+                forks=github_stats.forks,
+                open_issues=github_stats.open_issues,
+                contributors_count=github_stats.contributors_count,
+                last_commit_at=github_stats.last_commit_at,   # fixed: was last_activity_at
+                days_since_last_activity=github_stats.days_since_last_commit,
+                activity_status=github_stats.activity_status,
+                is_archived=github_stats.is_archived,
+                license_id=github_stats.license_spdx,
+                fetch_error=github_stats.error,
+                fetched_at=github_stats.fetched_at,
+            ))
+
+        # hf block
+        if hf_stats is not None and hf_stats.error is None:
+            db.add(RepoStat(
+                id=uuid.uuid4(),
+                benchmark_id=benchmark.id,
+                source="hf_dataset",
+                url=raw.get("dataset_repository") or "",   # fixed: was missing entirely
+                owner=hf_stats.owner,
+                name=hf_stats.name,
+                stars_or_likes=hf_stats.likes,              # fixed: was likes=
+                downloads=hf_stats.downloads,
+                last_commit_at=hf_stats.last_modified_at,   # fixed: was last_activity_at
+                days_since_last_activity=hf_stats.days_since_last_modified,
+                activity_status=hf_stats.activity_status,
+                is_private=hf_stats.is_private,
+                is_gated=hf_stats.is_gated,
+                license_id=hf_stats.license_id,
+                fetch_error=hf_stats.error,
+                fetched_at=hf_stats.fetched_at,
+            ))
 
         if _truncated_fields:
             job.status = "needs_review"
