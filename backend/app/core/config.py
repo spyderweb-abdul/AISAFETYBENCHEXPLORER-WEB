@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL_LOCAL: str = ""
     OLLAMA_NATIVE_URL: str = ""
     OLLAMA_API_KEY: str = ""
-
+    
     SEMANTIC_SCHOLAR_API_KEY: str = ""
+
+    GITHUB_TOKEN: str = ""
+    HF_TOKEN: str = ""
+    REDIS_URL: str = "redis://redis:6379/0"
 
     class Config:
         env_file = ".env"
