@@ -27,6 +27,7 @@ from app.models.orm import Benchmark, EvalMetric, ExtractionJob, RepoStat
 from app.core.complexity_classifier import ComplexitySignals, classify
 from app.core.paper_fetcher import fetch_source
 from app.core.config import settings
+from app.core.cost_tracking import estimate_cost_usd
 from app.core.github_scrapper import fetch_github_stats
 from app.core.hf_scrapper import fetch_hf_dataset_stats
 
@@ -566,7 +567,7 @@ def _build_user_message(source_type: str, source_value: str, fetched: dict[str, 
     return "\n".join(parts)
 
 
-def _call_openai(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> dict[str, Any]:
+def _call_openai(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
     import openai
 
     client = openai.OpenAI(api_key=api_key)
@@ -580,7 +581,54 @@ def _call_openai(model_name: str, source_type: str, source_value: str, api_key: 
         response_format={"type": "json_object"},
         temperature=0.0,
     )
-    return json.loads(response.choices[0].message.content or "{}")
+    # Roadmap item 12: capture token usage for per-run cost tracking.
+    usage = {
+        "input_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+        "output_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+    }
+    return json.loads(response.choices[0].message.content or "{}"), usage
+
+def _call_ollama(
+    model_name: str, source_type: str, source_value: str,
+    base_url: str, api_key: str, fetched: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Calls an open-weight model (DeepSeek, Qwen, Kimi, etc.) hosted on
+    Ollama Cloud via its OpenAI-compatible /v1/chat/completions endpoint
+    (https://ollama.com/v1 by default, see app/core/config.py's
+    OLLAMA_BASE_URL_CLOUD). Reuses the same openai SDK as _call_openai
+    -- Ollama's cloud and local APIs both speak this protocol, so no
+    separate client library is needed.
+    """
+    import openai
+
+    if not base_url:
+        raise ValueError(
+            "OLLAMA_BASE_URL_CLOUD is not set -- cannot call an ollama/* "
+            "model. Set it in backend/.env (default: https://ollama.com/v1)."
+        )
+    if not api_key:
+        raise ValueError(
+            "OLLAMA_API_KEY is not set -- Ollama Cloud requires an API "
+            "key. Create one at https://ollama.com/settings/keys and set "
+            "OLLAMA_API_KEY in backend/.env."
+        )
+
+    client = openai.OpenAI(base_url=base_url, api_key=api_key)
+    user_msg = _build_user_message(source_type, source_value, fetched)
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT_STUB},
+            {"role": "user", "content": user_msg},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+    )
+    usage = {
+        "input_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+        "output_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+    }
+    return json.loads(response.choices[0].message.content or "{}"), usage
 
 
 def _call_anthropic(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> dict[str, Any]:
@@ -620,6 +668,10 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
         # Anthropic executes the actual search and injects results into the
         # conversation before Claude's final text response.
     )
+    usage = {
+        "input_tokens": getattr(message.usage, "input_tokens", 0) or 0,
+        "output_tokens": getattr(message.usage, "output_tokens", 0) or 0,
+    }
 
     if message.stop_reason == "max_tokens":
         logger.warning(
@@ -639,11 +691,16 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
                 "Retrying Anthropic call for %s:%s once with max_tokens=%d.",
                 source_type, source_value, min(_max_tokens * 2, 32000),
             )
-            return _call_anthropic(
+            retry_parsed, retry_usage = _call_anthropic(
                 model_name, source_type, source_value, api_key, fetched,
                 _max_tokens=min(_max_tokens * 2, 32000),
                 _retry_on_truncation=False,
             )
+            combined_usage = {
+                "input_tokens": usage["input_tokens"] + retry_usage["input_tokens"],
+                "output_tokens": usage["output_tokens"] + retry_usage["output_tokens"],
+            }
+            return retry_parsed, combined_usage
 
     # message.content is a list of content blocks: with extended thinking
     # and/or web_search enabled, Claude returns ThinkingBlock and
@@ -671,8 +728,8 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
             "Full raw text (first 3000 chars): %s",
             source_type, source_value, all_text[:3000],
         )
-        return {}
-    return parsed
+        return {}, usage
+    return parsed, usage
 
 
 def _extract_last_balanced_json(text: str) -> dict[str, Any] | None:
@@ -751,9 +808,11 @@ def run_extraction(
 
         provider, model_name = (model_used.split("/", 1) + [model_used])[:2]
         if provider == "openai":
-            raw = _call_openai(model_name, source_type, source_value, openai_api_key, fetched)
+            raw, usage = _call_openai(model_name, source_type, source_value, openai_api_key, fetched)
         elif provider == "anthropic":
-            raw = _call_anthropic(model_name, source_type, source_value, anthropic_api_key, fetched)
+            raw, usage = _call_anthropic(model_name, source_type, source_value, anthropic_api_key, fetched)
+        elif provider == "ollama":
+            raw, usage = _call_ollama(model_name, source_type, source_value, settings.OLLAMA_BASE_URL_CLOUD, settings.OLLAMA_API_KEY, fetched)
         else:
             raise ValueError(f"Unknown model provider: {provider}")
 
@@ -948,6 +1007,14 @@ def run_extraction(
         job.requires_review = qs < 0.75
         job.result_benchmark_id = benchmark.id
         job.completed_at = datetime.now(timezone.utc)
+        # Roadmap item 12: persist token usage and estimated cost for
+        # this run, so GET /extraction/jobs/variance can report total
+        # spend per source_value across repeated attempts.
+        job.input_tokens = usage.get("input_tokens")
+        job.output_tokens = usage.get("output_tokens")
+        job.estimated_cost_usd = estimate_cost_usd(
+            model_used, usage.get("input_tokens"), usage.get("output_tokens")
+        )
         db.commit()
         logger.info("Extraction job %s completed. quality_score=%.2f status=%s", job_id, qs, job.status)
 

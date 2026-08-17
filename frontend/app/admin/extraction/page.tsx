@@ -3,17 +3,30 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ExtractionJob,
+  JobVariance,
+  getJobVariance,
   listExtractionJobs,
   reviewExtractionJob,
   submitExtractionJob,
 } from "../../../lib/api";
 
+// Ollama Cloud entries (deepseek/kimi/qwen) call open-weight models via
+// Ollama's OpenAI-compatible endpoint -- see
+// backend/app/core/agent_runner.py's _call_ollama() and
+// ollama_patch_instructions.md. Model tags verified against Ollama
+// Cloud's catalogue as of 2026-08-16 (https://ollama.com/search?c=cloud).
 const MODEL_OPTIONS = [
   "openai/gpt-4o",
   "openai/gpt-4o-mini",
   "anthropic/claude-sonnet-5",
   "anthropic/claude-3-5-sonnet-20241022",
   "anthropic/claude-haiku-4-5-20251001",
+  "ollama/deepseek-v4-pro",
+  "ollama/deepseek-v4-flash",
+  "ollama/kimi-k3",
+  "ollama/kimi-k2.6",
+  "ollama/qwen3.5:397b",
+  "ollama/qwen3-coder:480b",
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -23,6 +36,36 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "bg-red-100 text-red-700",
   needs_review: "bg-yellow-100 text-yellow-800",
 };
+
+/** Roadmap item 12: formats an estimated cost, or a clear "unpriced"
+ * label when the model wasn't in app/core/cost_tracking.py's pricing
+ * table -- either because it's genuinely unknown, or (for ollama/*
+ * models) because Ollama Cloud is a flat monthly subscription, not a
+ * per-token metered API, so no accurate per-run dollar figure exists
+ * to report. "unpriced" is the honest label in both cases.
+ *
+ * Fix: estimated_cost_usd is a Decimal on the backend and FastAPI/
+ * Pydantic serializes Decimal to JSON as a STRING, not a number --
+ * coerce with Number(cost) before calling .toFixed(), same pattern
+ * already used for quality_score elsewhere in this file. */
+function formatCost(cost: number | string | null | undefined): string {
+  if (cost === null || cost === undefined) return "unpriced";
+  const n = Number(cost);
+  if (Number.isNaN(n)) return "unpriced";
+  return `$${n.toFixed(4)}`;
+}
+
+function formatTokens(input: number | null, output: number | null): string {
+  if (input === null && output === null) return "N/A";
+  return `${input ?? "?"} in / ${output ?? "?"} out`;
+}
+
+function sumCosts(jobs: ExtractionJob[]): number {
+  return jobs.reduce((sum, j) => {
+    const n = Number(j.estimated_cost_usd);
+    return sum + (Number.isNaN(n) ? 0 : n);
+  }, 0);
+}
 
 export default function ExtractionPage() {
   const [jobs, setJobs] = useState<ExtractionJob[]>([]);
@@ -38,6 +81,10 @@ export default function ExtractionPage() {
 
   const [reviewNote, setReviewNote] = useState<Record<string, string>>({});
   const [reviewingId, setReviewingId] = useState<string | null>(null);
+
+  const [variance, setVariance] = useState<JobVariance | null>(null);
+  const [varianceLoading, setVarianceLoading] = useState(false);
+  const [varianceError, setVarianceError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,6 +103,21 @@ export default function ExtractionPage() {
     load();
   }, [load]);
 
+  async function handleCheckVariance() {
+    if (!sourceValue) return;
+    setVarianceLoading(true);
+    setVarianceError(null);
+    try {
+      const data = await getJobVariance(sourceValue);
+      setVariance(data);
+    } catch {
+      setVarianceError("Could not load prior-run stats for this source value.");
+      setVariance(null);
+    } finally {
+      setVarianceLoading(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -67,6 +129,7 @@ export default function ExtractionPage() {
         model_used: modelUsed,
       });
       setSourceValue("");
+      setVariance(null);
       await load();
     } catch (err: unknown) {
       const msg =
@@ -98,6 +161,7 @@ export default function ExtractionPage() {
 
   const pendingJobs = jobs.filter((j) => j.status === "needs_review");
   const otherJobs = jobs.filter((j) => j.status !== "needs_review");
+  const isOllamaModel = modelUsed.startsWith("ollama/");
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -125,7 +189,10 @@ export default function ExtractionPage() {
               <input
                 type="text"
                 value={sourceValue}
-                onChange={(e) => setSourceValue(e.target.value)}
+                onChange={(e) => {
+                  setSourceValue(e.target.value);
+                  setVariance(null);
+                }}
                 placeholder={sourceType === "doi" ? "10.1145/3442188.3445922" : sourceType === "arxiv_id" ? "2306.13213" : "https://..."}
                 required
                 className="border rounded px-3 py-2 text-sm"
@@ -143,7 +210,40 @@ export default function ExtractionPage() {
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
+              {isOllamaModel && (
+                <p className="text-xs text-gray-500 max-w-xs">
+                  Runs via Ollama Cloud. Cost will show as &quot;unpriced&quot;
+                  since Ollama Cloud is a flat subscription, not billed
+                  per token -- this is expected, not an error.
+                </p>
+              )}
             </div>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={handleCheckVariance}
+              disabled={!sourceValue || varianceLoading}
+              className="bg-gray-100 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 disabled:opacity-50"
+            >
+              {varianceLoading ? "Checking..." : "Check Prior Runs & Cost"}
+            </button>
+            {varianceError && <span className="text-xs text-red-600">{varianceError}</span>}
+            {variance && (
+              <span className="text-xs text-gray-700 bg-gray-50 border rounded px-3 py-1.5">
+                {variance.run_count === 0 ? (
+                  "No prior runs for this source value -- this will be run #1."
+                ) : (
+                  <>
+                    {variance.run_count} prior run{variance.run_count === 1 ? "" : "s"} | mean quality{" "}
+                    {variance.mean_quality_score !== null ? (Number(variance.mean_quality_score) * 100).toFixed(0) + "%" : "N/A"}
+                    {" "}(&plusmn;{variance.stddev_quality_score !== null ? (Number(variance.stddev_quality_score) * 100).toFixed(1) + "%" : "N/A"})
+                    {" "}| total spent so far {formatCost(variance.total_estimated_cost_usd)}
+                  </>
+                )}
+              </span>
+            )}
           </div>
 
           {submitError && (
@@ -170,6 +270,9 @@ export default function ExtractionPage() {
                   <div>
                     <p className="text-sm font-medium">{job.source_type}: {job.source_value}</p>
                     <p className="text-xs text-gray-500 mt-1">Model: {job.model_used} | Quality: {job.quality_score !== null ? (Number(job.quality_score) * 100).toFixed(0) + "%" : "N/A"}</p>
+                    <p className="text-xs text-gray-500">
+                      Tokens: {formatTokens(job.input_tokens, job.output_tokens)} | Est. cost: {formatCost(job.estimated_cost_usd)}
+                    </p>
                     {job.result_benchmark_id && (
                       <p className="text-xs text-gray-500">Benchmark ID: {job.result_benchmark_id}</p>
                     )}
@@ -239,6 +342,12 @@ export default function ExtractionPage() {
           <p className="text-sm text-gray-500">No jobs found.</p>
         )}
 
+        {!loading && jobs.length > 0 && (
+          <p className="text-xs text-gray-500 mb-2">
+            Total estimated spend across listed jobs: {formatCost(sumCosts(jobs))}
+          </p>
+        )}
+
         <div className="divide-y">
           {otherJobs.map((job) => (
             <div key={job.id} className="py-3 flex justify-between items-start flex-wrap gap-2">
@@ -246,6 +355,9 @@ export default function ExtractionPage() {
                 <p className="text-sm font-medium">{job.source_type}: {job.source_value}</p>
                 <p className="text-xs text-gray-500 mt-0.5">
                   Model: {job.model_used ?? "N/A"} | Quality: {job.quality_score !== null ? (Number(job.quality_score) * 100).toFixed(0) + "%" : "N/A"} | Submitted: {new Date(job.created_at).toLocaleString()}
+                </p>
+                <p className="text-xs text-gray-400">
+                  Tokens: {formatTokens(job.input_tokens, job.output_tokens)} | Est. cost: {formatCost(job.estimated_cost_usd)}
                 </p>
                 {job.result_benchmark_id && (
                   <p className="text-xs text-gray-400">Benchmark: {job.result_benchmark_id}</p>

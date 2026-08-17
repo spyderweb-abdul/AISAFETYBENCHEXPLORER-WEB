@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { Benchmark, getBenchmark } from "../../../../lib/api";
 import BenchmarkForm from "../../../../components/BenchmarkForm";
 import EvalMetricsPanel from "../../../../components/EvalMetricsPanel";
+import RepoStatsPanel from "../../../../components/RepoStatsPanel";
 
 export default function EditBenchmarkPage() {
   const params = useParams();
@@ -26,6 +27,11 @@ export default function EditBenchmarkPage() {
         benchmarkName={benchmark.benchmark_name}
         paperTitle={benchmark.benchmark_paper_title}
         paperLink={benchmark.paper_link}
+      />
+      <RepoStatsPanel
+        benchmarkId={id}
+        codeRepository={benchmark.code_repository}
+        datasetRepository={benchmark.dataset_repository}
       />
     </div>
   );

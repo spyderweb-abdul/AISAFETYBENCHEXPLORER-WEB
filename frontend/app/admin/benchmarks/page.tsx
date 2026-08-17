@@ -5,10 +5,26 @@ import Link from "next/link";
 import { Benchmark, deleteBenchmark, exportXlsxUrl, listBenchmarks } from "../../../lib/api";
 import ComplexityBadge from "../../../components/ComplexityBadge";
 
+const STATUS_BADGE_STYLE: Record<string, { background: string; color: string }> = {
+  published: { background: "#dcfce7", color: "#166534" },
+  pending_review: { background: "#fef3c7", color: "#92400e" },
+  rejected: { background: "#fee2e2", color: "#991b1b" },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const style = STATUS_BADGE_STYLE[status] || { background: "#e5e5e5", color: "#444" };
+  return (
+    <span className="badge" style={style}>
+      {status.replaceAll("_", " ")}
+    </span>
+  );
+}
+
 export default function BenchmarksListPage() {
   const [benchmarks, setBenchmarks] = useState<Benchmark[]>([]);
   const [search, setSearch] = useState("");
   const [complexity, setComplexity] = useState("");
+  const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -16,12 +32,13 @@ export default function BenchmarksListPage() {
     const params: Record<string, string> = {};
     if (search) params.search = search;
     if (complexity) params.complexity_level = complexity;
+    if (status) params.status = status;
     const data = await listBenchmarks(params);
     setBenchmarks(data);
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [search, complexity]);
+  useEffect(() => { load(); }, [search, complexity, status]);
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this benchmark record? This cannot be undone.")) return;
@@ -49,6 +66,12 @@ export default function BenchmarksListPage() {
           <option value="Low">Low</option>
           <option value="Unknown">Unknown</option>
         </select>
+        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">Default (hides rejected)</option>
+          <option value="published">Published only</option>
+          <option value="pending_review">Pending review only</option>
+          <option value="rejected">Rejected only</option>
+        </select>
       </div>
 
       <div className="card">
@@ -56,7 +79,7 @@ export default function BenchmarksListPage() {
           <table>
             <thead>
               <tr>
-                <th>Name</th><th>Task Type</th><th>Complexity</th><th>Cited By</th><th>License</th><th></th>
+                <th>Name</th><th>Task Type</th><th>Status</th><th>Complexity</th><th>Cited By</th><th>License</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -64,6 +87,7 @@ export default function BenchmarksListPage() {
                 <tr key={b.id}>
                   <td><Link href={`/admin/benchmarks/${b.id}`}>{b.benchmark_name}</Link></td>
                   <td>{b.task_type.join(", ")}</td>
+                  <td><StatusBadge status={b.status} /></td>
                   <td><ComplexityBadge level={b.complexity_level} /></td>
                   <td>{b.cited_by}</td>
                   <td>{b.license}</td>

@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.cost_tracking import compute_run_variance
 from app.core.deps import get_current_user, require_admin
 from app.core.agent_runner import run_extraction
 from app.db.session import get_db
 from app.models.orm import Benchmark, ExtractionJob, User
-from app.schemas.extraction_job import ExtractionJobCreate, ExtractionJobOut, ExtractionJobReview
+from app.schemas.extraction_job import (
+    ExtractionJobCreate,
+    ExtractionJobOut,
+    ExtractionJobReview,
+    JobVarianceOut,
+)
 
 router = APIRouter(prefix="/extraction", tags=["extraction"])
 
@@ -61,6 +68,41 @@ def list_jobs(
     if status_filter:
         q = q.filter(ExtractionJob.status == status_filter)
     return q.order_by(ExtractionJob.created_at.desc()).offset(skip).limit(limit).all()
+
+
+@router.get("/jobs/variance", response_model=JobVarianceOut)
+def get_job_variance(
+    source_value: str = Query(
+        ..., description="The exact source_value (DOI, arXiv ID, or PDF URL) to group runs by"
+    ),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> JobVarianceOut:
+    """Roadmap item 12: run-to-run variance and total cost across every
+    ExtractionJob that shares this source_value. Registered before
+    GET /jobs/{job_id} so "variance" is never mistaken for a job UUID.
+    """
+    jobs = (
+        db.query(ExtractionJob)
+        .filter(ExtractionJob.source_value == source_value)
+        .order_by(ExtractionJob.created_at)
+        .all()
+    )
+    stats = compute_run_variance([job.quality_score for job in jobs])
+    total_cost = None
+    if jobs:
+        priced_jobs = [job.estimated_cost_usd for job in jobs if job.estimated_cost_usd is not None]
+        if priced_jobs:
+            total_cost = sum(priced_jobs, Decimal("0"))
+
+    return JobVarianceOut(
+        source_value=source_value,
+        run_count=stats["run_count"],
+        mean_quality_score=stats["mean_quality_score"],
+        stddev_quality_score=stats["stddev_quality_score"],
+        total_estimated_cost_usd=total_cost,
+        job_ids=[job.id for job in jobs],
+    )
 
 
 @router.get("/jobs/{job_id}", response_model=ExtractionJobOut)
