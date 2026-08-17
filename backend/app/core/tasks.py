@@ -2,11 +2,12 @@
 app/core/tasks.py
 
 Celery tasks wrapping github_scrapper.py and hf_scrapper.py.
-New file -- place at app/core/tasks.py.
 
 Provides:
 - refresh_repo_stats_for_benchmark(benchmark_id): manual/single trigger
 - refresh_all_repo_stats(): scheduled bulk trigger (Celery Beat, weekly)
+
+
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from datetime import datetime, timezone
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
+from app.core.github_rate_limit import has_sufficient_quota
 from app.core.github_scrapper import fetch_github_stats
 from app.core.hf_scrapper import fetch_hf_dataset_stats, fetch_hf_model_stats
 from app.db.session import SessionLocal
@@ -24,14 +26,17 @@ from app.models.orm import Benchmark, RepoStat
 
 logger = logging.getLogger(__name__)
 
+# Each fetch_github_stats() call makes 3 GitHub REST requests (per the
+# Phase 4 section of PROJECT_ROADMAP.md). Used to estimate quota needed
+# for a bulk refresh before queuing it.
+_GITHUB_REQUESTS_PER_REPO = 3
 
-def _upsert_repo_stats(db, benchmark_id, source: str, stats) -> None:
-    existing = (
-        db.query(RepoStat)
-        .filter(RepoStat.benchmark_id == benchmark_id, RepoStat.source == source)
-        .first()
-    )
-    
+
+def _insert_repo_stats_snapshot(db, benchmark_id, source: str, stats) -> None:
+    """Roadmap item 15: always inserts a new RepoStat row rather than
+    updating an existing one in place, so repo_stats accumulates a real
+    history of fetched values over time instead of only ever holding
+    the latest snapshot."""
     fields = dict(
         owner=getattr(stats, "owner", None),
         name=getattr(stats, "name", None),
@@ -51,12 +56,7 @@ def _upsert_repo_stats(db, benchmark_id, source: str, stats) -> None:
         fetch_error=stats.error,
         fetched_at=stats.fetched_at,
     )
-
-    if existing:
-        for key, value in fields.items():
-            setattr(existing, key, value)
-    else:
-        db.add(RepoStat(id=uuid.uuid4(), benchmark_id=benchmark_id, source=source, **fields))
+    db.add(RepoStat(id=uuid.uuid4(), benchmark_id=benchmark_id, source=source, **fields))
 
 
 @celery_app.task(name="app.core.tasks.refresh_repo_stats_for_benchmark", bind=True, max_retries=2)
@@ -75,12 +75,12 @@ def refresh_repo_stats_for_benchmark(self, benchmark_id: str) -> dict:
 
         if benchmark.code_repository:
             gh_stats = fetch_github_stats(benchmark.code_repository, github_token=settings.GITHUB_TOKEN)
-            _upsert_repo_stats(db, benchmark.id, "github", gh_stats)
+            _insert_repo_stats_snapshot(db, benchmark.id, "github", gh_stats)
             result["sources_updated"].append("github")
 
         if benchmark.dataset_repository:
             hf_stats = fetch_hf_dataset_stats(benchmark.dataset_repository, hf_token=settings.HF_TOKEN)
-            _upsert_repo_stats(db, benchmark.id, "hf_dataset", hf_stats)
+            _insert_repo_stats_snapshot(db, benchmark.id, "hf_dataset", hf_stats)
             result["sources_updated"].append("hf_dataset")
 
         db.commit()
@@ -98,12 +98,52 @@ def refresh_all_repo_stats() -> dict:
     """
     Scheduled bulk trigger, run weekly via Celery Beat (see celery_app.py).
     Also exposed for a manual "Refresh All" admin action.
+
+    Roadmap item 14: checks GitHub's remaining rate-limit quota before
+    queuing anything. Aborts early (queuing nothing) if there is not
+    enough headroom for every benchmark with a code_repository, rather
+    than queuing everything and letting most rows fail individually
+    with "repo_fetch_failed: 403 rate limit exceeded" the way the
+    original Phase 4 testing incident played out.
     """
     db = SessionLocal()
     try:
-        benchmark_ids = [str(b.id) for b in db.query(Benchmark.id).all()]
+        benchmarks = db.query(Benchmark.id, Benchmark.code_repository).all()
     finally:
         db.close()
+
+    benchmark_ids = [str(b.id) for b in benchmarks]
+    github_repo_count = sum(1 for b in benchmarks if b.code_repository)
+    estimated_github_requests = github_repo_count * _GITHUB_REQUESTS_PER_REPO
+
+    if github_repo_count > 0:
+        try:
+            sufficient, quota_status = has_sufficient_quota(
+                settings.GITHUB_TOKEN, estimated_github_requests
+            )
+        except Exception as exc:
+            logger.warning(
+                "refresh_all_repo_stats: could not check GitHub rate limit (%s) "
+                "-- proceeding without a pre-flight guard.", exc,
+            )
+            sufficient, quota_status = True, None
+
+        if not sufficient:
+            logger.warning(
+                "refresh_all_repo_stats: aborting -- estimated %d GitHub requests "
+                "needed for %d repos, but only %s remain (resets at %s). Set "
+                "GITHUB_TOKEN in backend/.env if this is running unauthenticated, "
+                "or wait for the quota to reset, then retry.",
+                estimated_github_requests, github_repo_count,
+                quota_status["remaining"] if quota_status else "unknown",
+                quota_status["reset_at"] if quota_status else "unknown",
+            )
+            return {
+                "queued": 0,
+                "skipped_due_to_rate_limit": True,
+                "github_rate_limit_status": quota_status,
+                "estimated_github_requests_needed": estimated_github_requests,
+            }
 
     logger.info("refresh_all_repo_stats: queuing refresh for %d benchmarks", len(benchmark_ids))
     for benchmark_id in benchmark_ids:

@@ -73,8 +73,20 @@ export interface ExtractionJob {
   requires_review: boolean;
   result_benchmark_id: string | null;
   submitted_by: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  estimated_cost_usd: number | null;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface JobVariance {
+  source_value: string;
+  run_count: number;
+  mean_quality_score: number | null;
+  stddev_quality_score: number | null;
+  total_estimated_cost_usd: number | null;
+  job_ids: string[];
 }
 
 export async function login(email: string, password: string) {
@@ -167,6 +179,13 @@ export async function reviewExtractionJob(
   return data;
 }
 
+export async function getJobVariance(sourceValue: string) {
+  const { data } = await api.get<JobVariance>("/extraction/jobs/variance", {
+    params: { source_value: sourceValue },
+  });
+  return data;
+}
+
 
 export interface EvalMetric {
   id: string;
@@ -220,4 +239,71 @@ export async function updateMetric(metricId: string, payload: Partial<EvalMetric
 
 export async function deleteMetric(metricId: string) {
   await api.delete(`/metrics/${metricId}`);
+}
+
+
+/**
+ * Phase 4 / roadmap item 13: Repository Activity Statistics manual refresh.
+ * Backs the "Refresh Now" / "Refresh All" buttons on the admin UI. The
+ * underlying Celery tasks (refresh_repo_stats_for_benchmark,
+ * refresh_all_repo_stats) already run on a weekly Beat schedule; these
+ * calls just queue an on-demand run of the same tasks via the
+ * /repo-stats router (app/routers/repo_stats.py).
+ */
+export interface RepoStat {
+  id: string;
+  benchmark_id: string;
+  source: string;
+  url: string;
+  owner: string | null;
+  name: string | null;
+  stars_or_likes: number | null;
+  forks: number | null;
+  open_issues: number | null;
+  contributors_count: number | null;
+  downloads: number | null;
+  last_commit_at: string | null;
+  days_since_last_activity: number | null;
+  activity_status: string | null;
+  is_archived: boolean;
+  is_private: boolean;
+  is_gated: boolean;
+  license_id: string | null;
+  fetch_error: string | null;
+  fetched_at: string;
+}
+
+/** Roadmap item 15: repo_stats is now an append-only history table.
+ * Pass history=true to get every snapshot instead of just the latest
+ * per source. */
+export async function listRepoStatsForBenchmark(benchmarkId: string, history = false) {
+  const { data } = await api.get<RepoStat[]>(`/repo-stats/benchmarks/${benchmarkId}`, {
+    params: history ? { history: true } : {},
+  });
+  return data;
+}
+
+export async function triggerRepoStatsRefresh(benchmarkId: string) {
+  const { data } = await api.post<{ task_id: string; benchmark_id: string }>(
+    `/repo-stats/benchmarks/${benchmarkId}/refresh`
+  );
+  return data;
+}
+
+export async function triggerRepoStatsRefreshAll() {
+  const { data } = await api.post<{ task_id: string }>(`/repo-stats/refresh-all`);
+  return data;
+}
+
+/** Roadmap item 14: on-demand GitHub API quota visibility. */
+export interface GithubRateLimit {
+  limit: number;
+  remaining: number;
+  reset_at: string;
+  authenticated: boolean;
+}
+
+export async function getGithubRateLimit() {
+  const { data } = await api.get<GithubRateLimit>("/repo-stats/github-rate-limit");
+  return data;
 }

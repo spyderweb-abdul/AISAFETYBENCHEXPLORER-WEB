@@ -18,11 +18,29 @@ def list_benchmarks(
     task_type: Optional[str] = Query(None),
     complexity_level: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    status: Optional[str] = Query(
+        None,
+        description=(
+            "Filter benchmarks by status (published, pending_review, "
+            "rejected). If omitted, defaults to excluding 'rejected' "
+            "benchmarks only, so discarded extraction attempts never show "
+            "up by default -- pending_review benchmarks still show by "
+            "default since admins currently rely on seeing them in this "
+            "list. Pass status=published explicitly for a curated, "
+            "public-facing view (e.g. the future Phase 5 researcher "
+            "dashboard), or status=rejected / status=pending_review to "
+            "review a specific bucket."
+        ),
+    ),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     q = db.query(Benchmark)
+    if status:
+        q = q.filter(Benchmark.status == status)
+    else:
+        q = q.filter(Benchmark.status != "rejected")
     if task_type:
         q = q.filter(Benchmark.task_type.any(task_type))
     if complexity_level:
