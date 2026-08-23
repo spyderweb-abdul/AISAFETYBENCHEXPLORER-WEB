@@ -91,7 +91,7 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const { id, status, created_at, updated_at, ...updatableFields } = form as any;
+      const { id, status, created_at, updated_at, use_cases, safety_dimensions, ...updatableFields } = form as any;
       const payload = { ...updatableFields, cited_by: Number(form.cited_by) || 0 };
   
       if (benchmarkId) {
@@ -111,6 +111,36 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="card">
+      {benchmarkId && (form.use_cases?.length > 0 || form.safety_dimensions?.length > 0) && (
+        <div
+          style={{
+            marginBottom: 16, padding: "10px 12px", borderRadius: 6,
+            background: "#f3f4f6", fontSize: 12,
+          }}
+        >
+          <strong>Auto-classified (Phase 5, recomputed on every save):</strong>
+          {form.use_cases?.length > 0 && (
+            <p style={{ margin: "6px 0 0" }}>
+              Use Cases: {form.use_cases.map((u: string) => (
+                <span key={u} className="badge badge-medium" style={{ marginRight: 4 }}>{u}</span>
+              ))}
+            </p>
+          )}
+          {form.safety_dimensions?.length > 0 && (
+            <p style={{ margin: "6px 0 0" }}>
+              Safety Dimensions: {form.safety_dimensions.map((s: string) => (
+                <span key={s} className="badge badge-low" style={{ marginRight: 4 }}>{s}</span>
+              ))}
+            </p>
+          )}
+          <p style={{ margin: "6px 0 0", color: "#666" }}>
+            Derived from Task Type, Description, and Benchmark Name --
+            not directly editable. Change those fields and save to
+            recompute.
+          </p>
+        </div>
+      )}
+
       <div className="form-grid">
         <div className="field">
           <label>Benchmark Name</label>

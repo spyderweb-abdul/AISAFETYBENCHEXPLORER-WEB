@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import audit, auth, benchmarks, complexity, export, extraction, metrics, vocab, repo_stats
+from app.routers import audit, auth, benchmarks, complexity, export, extraction, metrics, stats, vocab, repo_stats
 
 app = FastAPI(
     title="AISafetyBenchExplorer API",
@@ -27,6 +27,7 @@ app.include_router(export.router)
 app.include_router(vocab.router)
 app.include_router(extraction.router)
 app.include_router(repo_stats.router)
+app.include_router(stats.router)
 
 
 @app.get("/health")

@@ -23,6 +23,28 @@ from app.schemas.extraction_job import (
 router = APIRouter(prefix="/extraction", tags=["extraction"])
 
 
+def _attach_benchmark_statuses(db: Session, jobs: list[ExtractionJob]) -> list[ExtractionJob]:
+    """FIX (2026-08-23): populates each job's result_benchmark_status
+    (not a real column -- see ExtractionJobOut) via one batched lookup,
+    so the frontend Pending Review queue can filter on the benchmark's
+    actual status instead of the job's status, which previously hid
+    every pending_review benchmark whose extraction job had a high
+    enough quality_score to be marked job.status="done"."""
+    benchmark_ids = [job.result_benchmark_id for job in jobs if job.result_benchmark_id]
+    status_by_id: dict[uuid.UUID, str] = {}
+    if benchmark_ids:
+        rows = (
+            db.query(Benchmark.id, Benchmark.status)
+            .filter(Benchmark.id.in_(benchmark_ids))
+            .all()
+        )
+        status_by_id = {row.id: row.status for row in rows}
+
+    for job in jobs:
+        job.result_benchmark_status = status_by_id.get(job.result_benchmark_id)
+    return jobs
+
+
 @router.post("/jobs", response_model=ExtractionJobOut, status_code=status.HTTP_202_ACCEPTED)
 def submit_job(
     payload: ExtractionJobCreate,
@@ -53,6 +75,7 @@ def submit_job(
         anthropic_api_key=settings.ANTHROPIC_API_KEY,
         semantic_scholar_api_key=settings.SEMANTIC_SCHOLAR_API_KEY,
     )
+    job.result_benchmark_status = None
     return job
 
 
@@ -67,7 +90,8 @@ def list_jobs(
     q = db.query(ExtractionJob)
     if status_filter:
         q = q.filter(ExtractionJob.status == status_filter)
-    return q.order_by(ExtractionJob.created_at.desc()).offset(skip).limit(limit).all()
+    jobs = q.order_by(ExtractionJob.created_at.desc()).offset(skip).limit(limit).all()
+    return _attach_benchmark_statuses(db, jobs)
 
 
 @router.get("/jobs/variance", response_model=JobVarianceOut)
@@ -114,7 +138,7 @@ def get_job(
     job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return job
+    return _attach_benchmark_statuses(db, [job])[0]
 
 
 @router.post("/jobs/{job_id}/review", response_model=ExtractionJobOut)
@@ -148,4 +172,5 @@ def review_job(
 
     db.commit()
     db.refresh(job)
+    job.result_benchmark_status = benchmark.status
     return job

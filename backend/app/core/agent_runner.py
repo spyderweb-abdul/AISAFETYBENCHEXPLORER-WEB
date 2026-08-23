@@ -28,6 +28,8 @@ from app.core.complexity_classifier import ComplexitySignals, classify
 from app.core.paper_fetcher import fetch_source
 from app.core.config import settings
 from app.core.cost_tracking import estimate_cost_usd
+from app.core.safety_dimension_classifier import classify_safety_dimensions
+from app.core.use_case_classifier import classify_use_cases
 from app.core.github_scrapper import fetch_github_stats
 from app.core.hf_scrapper import fetch_hf_dataset_stats
 
@@ -475,36 +477,6 @@ def _persist_eval_metrics(db: Session, benchmark_id: uuid.UUID, catalogue: list[
         count += 1
     return count
 
-
-# --- PATCH: defensive VARCHAR(100) length guard -----------------------------
-# Root cause of this failure: no_of_samples came back as a 253-character
-# descriptive string (e.g. "~33,600 word-association trials (one-sample
-# t-test df=33,599) spanning 21 stereotypes..."), but the benchmarks table's
-# no_of_samples column (and several sibling single-value text columns) are
-# declared VARCHAR(100) in orm.py, so Postgres raised
-# StringDataRightTruncation and the whole INSERT was rolled back.
-#
-# The real, durable fix is a migration widening these columns (no_of_samples
-# in particular, since master-prompt-quality extraction legitimately produces
-# multi-clause sample-count descriptions like the PluriHarms/RippleBench rows
-# already in the workbook) from VARCHAR(100) to VARCHAR(500) or TEXT.
-# That migration is outside agent_runner.py's scope (lives in orm.py /
-# an Alembic revision) -- see note at bottom of this file.
-#
-# Until that migration ships, this guard prevents a good, expensive
-# extraction from being thrown away by a hard DB error: it truncates any
-# offending field to fit the current column width (with an ellipsis marker)
-# BEFORE the INSERT, logs a warning so the truncation is visible/auditable,
-# and lets the job complete as "needs_review" instead of "failed".
-# 2026-07-18: no_of_samples (now TEXT) and license (now VARCHAR(300)) were
-# widened via Alembic migration 0002_widen_benchmark_text_columns after
-# StringDataRightTruncation errors on real extractions (see Known Gaps,
-# PROJECT_ROADMAP.md Section 9, item 1). Removed from this clamp list since
-# they can no longer overflow at realistic extraction lengths. The
-# remaining fields are still bounded (VARCHAR(255) or enum-backed) and
-# keep this safety net so a legitimately good extraction is never
-# discarded outright by a DB-level truncation error -- it degrades to
-# needs_review instead.
 _VARCHAR_100_FIELDS = [
     "benchmark_name", "benchmark_paper_title", "code_dataset",
     "created_by", "dev_purpose", "complexity_level",
@@ -637,22 +609,10 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
     client = anthropic.Anthropic(api_key=api_key)
     user_msg = _build_user_message(source_type, source_value, fetched)
 
-    # Enable Anthropic's server-side web_search tool. This lets Claude
-    # autonomously issue real web searches (e.g. for "no_of_samples" details
-    # buried in a paper's body/appendix that our fetched abstract excerpt
-    # does not cover, GitHub star counts, license text, etc.) instead of
-    # relying purely on training-data recall or the short abstract we fetched
-    # ourselves in paper_fetcher.py. Anthropic executes the search server-side
-    # and returns web_search_tool_result blocks inline in the response --
-    # no extra client-side loop is needed for this tool specifically.
+
     message = client.messages.create(
         model=model_name,
-        # The Phase 0.2 instructions above now mandate 5 specific searches
-        # per extraction (citations, github, huggingface dataset, license,
-        # huggingface card cross-check), plus any follow-up searches for
-        # ambiguous sample counts or metric formulas. The old cap of 5 left
-        # zero budget for follow-ups and could get exhausted mid-way through
-        # the mandatory list itself. Raised to 12.
+
         max_tokens=16384,
         system=SYSTEM_PROMPT_STUB,
         messages=[{"role": "user", "content": user_msg}],
@@ -663,10 +623,6 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
                 "max_uses": 12,
             }
         ],
-        # Note: this is Anthropic's built-in server-side tool (verified type
-        # "web_search_20250305"), not a client-side function we implement --
-        # Anthropic executes the actual search and injects results into the
-        # conversation before Claude's final text response.
     )
     usage = {
         "input_tokens": getattr(message.usage, "input_tokens", 0) or 0,
@@ -679,13 +635,7 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
             "at max_tokens=%d. The final JSON may be incomplete or missing entirely.",
             source_type, source_value, _max_tokens,
         )
-        # Real fix for the "model returned no benchmark_name" failure mode:
-        # a truncated response has no valid closing brace for the outer JSON
-        # object, so there is nothing for _extract_last_balanced_json() to
-        # salvage -- it correctly returns None, and the caller correctly
-        # fails the job. Retrying with a larger budget is the only thing
-        # that actually recovers a complete object, so do exactly one retry
-        # at double the token budget (capped) before giving up.
+
         if _retry_on_truncation and _max_tokens < 32000:
             logger.info(
                 "Retrying Anthropic call for %s:%s once with max_tokens=%d.",
@@ -702,12 +652,6 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
             }
             return retry_parsed, combined_usage
 
-    # message.content is a list of content blocks: with extended thinking
-    # and/or web_search enabled, Claude returns ThinkingBlock and
-    # ServerToolUseBlock/WebSearchToolResultBlock entries interleaved with
-    # one or more TextBlocks. Concatenate ALL text blocks (not just the
-    # last), since Claude sometimes splits its final answer across multiple
-    # text segments interspersed with tool-use blocks.
     text_blocks = [
         getattr(block, "text", None)
         for block in (message.content or [])
@@ -843,12 +787,7 @@ def run_extraction(
         if not raw.get("paper_link"):
             raw["paper_link"] = fetched.get("url") or source_value
 
-        # Phase 2 QA gate: structural defects in evaluation_metrics_catalogue
-        # (missing keys, empty metricname, true duplicates, mismatched
-        # benchmark/paper identifiers) still raise ValueError here (job marked
-        # "failed"). Naming drift between evaluation_metrics and the catalogue
-        # is now reconciled fuzzily and only logged, not raised -- see
-        # _validate_eval_metrics_catalogue() docstring.
+
         raw = _validate_eval_metrics_catalogue(raw)
 
         qs = _quality_score(raw)
@@ -876,13 +815,7 @@ def run_extraction(
                 job_id, _truncated_fields,
             )
 
-        # --- Phase 4: deterministic GitHub/HuggingFace verification -----------
-        # Closes Known Gap 10: instead of trusting the model's own web_search
-        # recall for stars/license/activity, verify code_repository and
-        # dataset_repository (already extracted by the model above) against
-        # the real GitHub/HuggingFace APIs. Overwrite `license` with the
-        # scraper's ground truth when available, since a verified SPDX id or
-        # HF license tag is more reliable than model recall.
+
         github_stats = None
         hf_stats = None
 
@@ -943,9 +876,12 @@ def run_extraction(
         benchmark_data["created_by_user_id"] = submitted_by
 
         benchmark = Benchmark(**benchmark_data)
+        benchmark.use_cases = classify_use_cases(
+            benchmark.task_type, benchmark.description, benchmark.benchmark_name
+        )
+        benchmark.safety_dimensions = classify_safety_dimensions(benchmark.task_type)
         db.add(benchmark)
         db.flush()
-
         # Phase 2: persist Sheet 2 (Evaluation Metrics Catalogue) rows now
         # that benchmark.id exists.
         metrics_persisted = _persist_eval_metrics(
