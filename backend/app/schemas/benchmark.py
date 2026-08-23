@@ -127,5 +127,13 @@ class BenchmarkOut(BenchmarkBase):
 
     id: UUID
     status: str
+    # Phase 5: deterministic classifications computed server-side by
+    # app/core/use_case_classifier.py / app/core/safety_dimension_classifier.py.
+    # Deliberately absent from BenchmarkCreate/BenchmarkUpdate (which has
+    # extra="forbid") -- these are never accepted as user input, only
+    # ever computed and stamped onto the ORM object in
+    # app/routers/benchmarks.py and app/core/agent_runner.py.
+    use_cases: list[str] = Field(default_factory=list)
+    safety_dimensions: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

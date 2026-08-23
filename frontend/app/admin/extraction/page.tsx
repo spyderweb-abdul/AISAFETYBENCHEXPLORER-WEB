@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   ExtractionJob,
   JobVariance,
@@ -10,16 +11,11 @@ import {
   submitExtractionJob,
 } from "../../../lib/api";
 
-// Ollama Cloud entries (deepseek/kimi/qwen) call open-weight models via
-// Ollama's OpenAI-compatible endpoint -- see
-// backend/app/core/agent_runner.py's _call_ollama() and
-// ollama_patch_instructions.md. Model tags verified against Ollama
-// Cloud's catalogue as of 2026-08-16 (https://ollama.com/search?c=cloud).
 const MODEL_OPTIONS = [
   "openai/gpt-4o",
   "openai/gpt-4o-mini",
   "anthropic/claude-sonnet-5",
-  "anthropic/claude-3-5-sonnet-20241022",
+  "anthropic/claude-opus-5",
   "anthropic/claude-haiku-4-5-20251001",
   "ollama/deepseek-v4-pro",
   "ollama/deepseek-v4-flash",
@@ -37,17 +33,6 @@ const STATUS_COLORS: Record<string, string> = {
   needs_review: "bg-yellow-100 text-yellow-800",
 };
 
-/** Roadmap item 12: formats an estimated cost, or a clear "unpriced"
- * label when the model wasn't in app/core/cost_tracking.py's pricing
- * table -- either because it's genuinely unknown, or (for ollama/*
- * models) because Ollama Cloud is a flat monthly subscription, not a
- * per-token metered API, so no accurate per-run dollar figure exists
- * to report. "unpriced" is the honest label in both cases.
- *
- * Fix: estimated_cost_usd is a Decimal on the backend and FastAPI/
- * Pydantic serializes Decimal to JSON as a STRING, not a number --
- * coerce with Number(cost) before calling .toFixed(), same pattern
- * already used for quality_score elsewhere in this file. */
 function formatCost(cost: number | string | null | undefined): string {
   if (cost === null || cost === undefined) return "unpriced";
   const n = Number(cost);
@@ -159,9 +144,14 @@ export default function ExtractionPage() {
     }
   }
 
-  const pendingJobs = jobs.filter((j) => j.status === "needs_review");
-  const otherJobs = jobs.filter((j) => j.status !== "needs_review");
-  const isOllamaModel = modelUsed.startsWith("ollama/");
+  // FIX (2026-08-23): partition on the benchmark's actual status, not
+  // job.status. A high quality_score job gets job.status="done"
+  // immediately, even though its benchmark is still
+  // Benchmark.status="pending_review" until an admin approves it --
+  // filtering on job.status=="needs_review" alone silently hid every
+  // such benchmark from this queue with no way to review it.
+  const pendingJobs = jobs.filter((j) => j.result_benchmark_status === "pending_review");
+  const otherJobs = jobs.filter((j) => j.result_benchmark_status !== "pending_review");
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -210,13 +200,6 @@ export default function ExtractionPage() {
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
-              {isOllamaModel && (
-                <p className="text-xs text-gray-500 max-w-xs">
-                  Runs via Ollama Cloud. Cost will show as &quot;unpriced&quot;
-                  since Ollama Cloud is a flat subscription, not billed
-                  per token -- this is expected, not an error.
-                </p>
-              )}
             </div>
           </div>
 
@@ -269,16 +252,24 @@ export default function ExtractionPage() {
                 <div className="flex justify-between items-start flex-wrap gap-2">
                   <div>
                     <p className="text-sm font-medium">{job.source_type}: {job.source_value}</p>
-                    <p className="text-xs text-gray-500 mt-1">Model: {job.model_used} | Quality: {job.quality_score !== null ? (Number(job.quality_score) * 100).toFixed(0) + "%" : "N/A"}</p>
-                    <p className="text-xs text-gray-500">
-                      Tokens: {formatTokens(job.input_tokens, job.output_tokens)} | Est. cost: {formatCost(job.estimated_cost_usd)}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Model: {job.model_used} | Quality: {job.quality_score !== null ? (Number(job.quality_score) * 100).toFixed(0) + "%" : "N/A"}
+                      {" "}| {job.requires_review ? (
+                        <span className="text-yellow-700 font-medium">Flagged for review (below 75% quality)</span>
+                      ) : (
+                        <span className="text-green-700">High quality -- review is a formality, not a correction</span>
+                      )}
                     </p>
                     {job.result_benchmark_id && (
-                      <p className="text-xs text-gray-500">Benchmark ID: {job.result_benchmark_id}</p>
+                      <p className="text-xs mt-1">
+                        <Link href={`/admin/benchmarks/${job.result_benchmark_id}`} className="text-indigo-600 hover:underline">
+                          Inspect full benchmark fields before deciding &rarr;
+                        </Link>
+                      </p>
                     )}
                   </div>
                   <span className={`text-xs px-2 py-1 rounded font-medium ${STATUS_COLORS[job.status] ?? "bg-gray-100"}`}>
-                    {job.status}
+                    job: {job.status}
                   </span>
                 </div>
                 <div className="mt-3 flex gap-2 flex-wrap items-center">
@@ -360,7 +351,13 @@ export default function ExtractionPage() {
                   Tokens: {formatTokens(job.input_tokens, job.output_tokens)} | Est. cost: {formatCost(job.estimated_cost_usd)}
                 </p>
                 {job.result_benchmark_id && (
-                  <p className="text-xs text-gray-400">Benchmark: {job.result_benchmark_id}</p>
+                  <p className="text-xs text-gray-400">
+                    Benchmark:{" "}
+                    <Link href={`/admin/benchmarks/${job.result_benchmark_id}`} className="text-indigo-600 hover:underline">
+                      {job.result_benchmark_id}
+                    </Link>
+                    {job.result_benchmark_status ? ` (${job.result_benchmark_status})` : ""}
+                  </p>
                 )}
               </div>
               <span className={`text-xs px-2 py-1 rounded font-medium ${STATUS_COLORS[job.status] ?? "bg-gray-100"}`}>

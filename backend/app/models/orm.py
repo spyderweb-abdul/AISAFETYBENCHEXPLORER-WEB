@@ -57,6 +57,13 @@ class Benchmark(Base):
     dataset_repository = Column(Text)
     paper_link = Column(Text)
     status = Column(String(30), nullable=False, default="published")
+    # Phase 5: deterministic classifications, computed by
+    # app/core/use_case_classifier.py and
+    # app/core/safety_dimension_classifier.py at extraction time and on
+    # every manual create/update (see app/routers/benchmarks.py) -- not
+    # user-settable directly via BenchmarkCreate/BenchmarkUpdate.
+    use_cases = Column(ARRAY(Text), nullable=False, default=list)
+    safety_dimensions = Column(ARRAY(Text), nullable=False, default=list)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -124,13 +131,6 @@ class ExtractionJob(Base):
     requires_review = Column(Boolean, default=True)
     result_benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id", ondelete="SET NULL"))
     submitted_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    # Roadmap item 12: per-run cost / token usage tracking. Populated in
-    # agent_runner.py's run_extraction() from the OpenAI/Anthropic SDK
-    # response usage object; None when unavailable (e.g. job failed
-    # before a model call completed, or the model is not in
-    # app/core/cost_tracking.py's pricing table). Run-to-run variance is
-    # computed on read across all jobs sharing a source_value, not stored
-    # as its own column -- see GET /extraction/jobs/variance.
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
     estimated_cost_usd = Column(Numeric(10, 4), nullable=True)

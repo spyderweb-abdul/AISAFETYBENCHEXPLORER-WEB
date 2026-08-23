@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Benchmark, deleteBenchmark, exportXlsxUrl, listBenchmarks } from "../../../lib/api";
+import { Benchmark, USE_CASE_CATEGORIES, deleteBenchmark, exportXlsxUrl, listBenchmarks } from "../../../lib/api";
 import ComplexityBadge from "../../../components/ComplexityBadge";
 
 const STATUS_BADGE_STYLE: Record<string, { background: string; color: string }> = {
@@ -25,6 +25,7 @@ export default function BenchmarksListPage() {
   const [search, setSearch] = useState("");
   const [complexity, setComplexity] = useState("");
   const [status, setStatus] = useState("");
+  const [useCase, setUseCase] = useState("");
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -33,12 +34,13 @@ export default function BenchmarksListPage() {
     if (search) params.search = search;
     if (complexity) params.complexity_level = complexity;
     if (status) params.status = status;
+    if (useCase) params.use_case = useCase;
     const data = await listBenchmarks(params);
     setBenchmarks(data);
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [search, complexity, status]);
+  useEffect(() => { load(); }, [search, complexity, status, useCase]);
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this benchmark record? This cannot be undone.")) return;
@@ -56,7 +58,7 @@ export default function BenchmarksListPage() {
         </div>
       </div>
 
-      <div className="card" style={{ display: "flex", gap: 12 }}>
+      <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} />
         <select value={complexity} onChange={(e) => setComplexity(e.target.value)}>
           <option value="">All complexity levels</option>
@@ -65,6 +67,12 @@ export default function BenchmarksListPage() {
           <option value="Medium">Medium</option>
           <option value="Low">Low</option>
           <option value="Unknown">Unknown</option>
+        </select>
+        <select value={useCase} onChange={(e) => setUseCase(e.target.value)}>
+          <option value="">All use cases</option>
+          {USE_CASE_CATEGORIES.map((u) => (
+            <option key={u} value={u}>{u}</option>
+          ))}
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">Default (hides rejected)</option>
@@ -79,7 +87,7 @@ export default function BenchmarksListPage() {
           <table>
             <thead>
               <tr>
-                <th>Name</th><th>Task Type</th><th>Status</th><th>Complexity</th><th>Cited By</th><th>License</th><th></th>
+                <th>Name</th><th>Task Type</th><th>Use Case</th><th>Status</th><th>Complexity</th><th>Cited By</th><th>License</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -87,6 +95,7 @@ export default function BenchmarksListPage() {
                 <tr key={b.id}>
                   <td><Link href={`/admin/benchmarks/${b.id}`}>{b.benchmark_name}</Link></td>
                   <td>{b.task_type.join(", ")}</td>
+                  <td>{b.use_cases?.join(", ") || "-"}</td>
                   <td><StatusBadge status={b.status} /></td>
                   <td><ComplexityBadge level={b.complexity_level} /></td>
                   <td>{b.cited_by}</td>

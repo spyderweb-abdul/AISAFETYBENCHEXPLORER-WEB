@@ -13,6 +13,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+export const USE_CASE_CATEGORIES = [
+  "Medical AI",
+  "Financial Services",
+  "Customer Service Chatbots",
+  "Content Moderation",
+  "Education",
+  "General Purpose",
+];
+
 export interface Benchmark {
   id: string;
   benchmark_name: string;
@@ -37,6 +46,8 @@ export interface Benchmark {
   dataset_repository: string | null;
   paper_link: string | null;
   status: string;
+  use_cases: string[];
+  safety_dimensions: string[];
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +83,11 @@ export interface ExtractionJob {
   quality_score: number | null;
   requires_review: boolean;
   result_benchmark_id: string | null;
+  /** FIX (2026-08-23): the linked benchmark's actual status, since
+   * job.status alone doesn't reveal whether the benchmark is still
+   * pending_review -- a high quality_score job can be job.status=
+   * "done" while its benchmark sits at pending_review indefinitely. */
+  result_benchmark_status: string | null;
   submitted_by: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
@@ -126,6 +142,17 @@ export async function updateBenchmark(id: string, payload: Partial<Benchmark>) {
 
 export async function deleteBenchmark(id: string) {
   await api.delete(`/benchmarks/${id}`);
+}
+
+/** FIX (2026-08-23): benchmark-centric review, reachable directly from
+ * the benchmark edit page -- see ReviewPanel.tsx. Backs
+ * POST /benchmarks/{id}/review. */
+export async function reviewBenchmark(id: string, approve: boolean, reviewer_note?: string) {
+  const { data } = await api.post<Benchmark>(`/benchmarks/${id}/review`, {
+    approve,
+    reviewer_note,
+  });
+  return data;
 }
 
 export async function classifyComplexity(signals: Record<string, boolean | number>) {
@@ -242,14 +269,6 @@ export async function deleteMetric(metricId: string) {
 }
 
 
-/**
- * Phase 4 / roadmap item 13: Repository Activity Statistics manual refresh.
- * Backs the "Refresh Now" / "Refresh All" buttons on the admin UI. The
- * underlying Celery tasks (refresh_repo_stats_for_benchmark,
- * refresh_all_repo_stats) already run on a weekly Beat schedule; these
- * calls just queue an on-demand run of the same tasks via the
- * /repo-stats router (app/routers/repo_stats.py).
- */
 export interface RepoStat {
   id: string;
   benchmark_id: string;
@@ -273,9 +292,6 @@ export interface RepoStat {
   fetched_at: string;
 }
 
-/** Roadmap item 15: repo_stats is now an append-only history table.
- * Pass history=true to get every snapshot instead of just the latest
- * per source. */
 export async function listRepoStatsForBenchmark(benchmarkId: string, history = false) {
   const { data } = await api.get<RepoStat[]>(`/repo-stats/benchmarks/${benchmarkId}`, {
     params: history ? { history: true } : {},
@@ -295,7 +311,6 @@ export async function triggerRepoStatsRefreshAll() {
   return data;
 }
 
-/** Roadmap item 14: on-demand GitHub API quota visibility. */
 export interface GithubRateLimit {
   limit: number;
   remaining: number;
@@ -305,5 +320,25 @@ export interface GithubRateLimit {
 
 export async function getGithubRateLimit() {
   const { data } = await api.get<GithubRateLimit>("/repo-stats/github-rate-limit");
+  return data;
+}
+
+export interface HeatmapDimension {
+  dimension: string;
+  popular: number;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+  gap_severity: string;
+}
+
+export interface ResearchGapHeatmap {
+  total_benchmarks: number;
+  dimensions: HeatmapDimension[];
+}
+
+export async function getResearchGapHeatmap() {
+  const { data } = await api.get<ResearchGapHeatmap>("/stats/research-gap-heatmap");
   return data;
 }

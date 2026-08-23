@@ -30,10 +30,19 @@ class ExtractionJobOut(BaseModel):
     quality_score: Optional[Decimal]
     requires_review: bool
     result_benchmark_id: Optional[uuid.UUID]
+    # FIX (2026-08-23): job.status alone does not tell you whether the
+    # resulting benchmark still needs human review -- a high
+    # quality_score run gets job.status="done" immediately, even though
+    # its benchmark is still Benchmark.status="pending_review" until an
+    # admin actually approves it. Without this field, the admin frontend
+    # had no way to show that benchmark in its Pending Review queue at
+    # all, since that queue previously filtered on job.status ==
+    # "needs_review" only. Populated via a join in
+    # app/routers/extraction.py's list_jobs()/get_job(), not a real
+    # column on ExtractionJob -- set as a plain attribute on the ORM
+    # instance before Pydantic reads it via from_attributes.
+    result_benchmark_status: Optional[str] = None
     submitted_by: Optional[uuid.UUID]
-    # Roadmap item 12: per-run cost / token usage. None when the job
-    # failed before a model call completed, or model_used is not in
-    # app/core/cost_tracking.py's pricing table.
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     estimated_cost_usd: Optional[Decimal] = None
