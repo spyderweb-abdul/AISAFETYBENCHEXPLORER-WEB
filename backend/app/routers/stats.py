@@ -1,26 +1,20 @@
-"""
-app/routers/stats.py
-
-Phase 5: public (no auth required, matching GET /benchmarks) endpoint
-for the Research Gap Heatmap. Aggregates over published benchmarks'
-safety_dimensions x complexity_level, replicating
-research_gap_heatmap.py's exact severity rules (see
-app/core/safety_dimension_classifier.py's calculate_gap_severity()).
-
-Computed live in Python rather than as a materialized SQL view (Section
-4's original schema-mapping table named a materialized view for this),
-since the catalogue is small (182+ benchmarks per Section 1) and this
-avoids introducing PostgreSQL array-unnest aggregation SQL that would be
-harder to keep in sync with the deterministic classifier module if its
-category list ever changes. Revisit as a materialized view if the
-catalogue grows large enough for this to become a real cost.
-"""
+# Destination path: backend/app/routers/stats.py
+# Replaces the existing file in full.
+#
+# CHANGES (Phase 5 gap closure, this session):
+# GET /research-gap-heatmap is one of the public, unauthenticated
+# endpoints named in Known Gap item 22. Added an explicit slowapi rate
+# limit (20/minute, tighter than the 100/minute global default in
+# app/core/rate_limit.py) since this endpoint aggregates over every
+# published benchmark on each call rather than a simple filtered list
+# query. No change to the heatmap computation itself.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import limiter
 from app.core.safety_dimension_classifier import build_research_gap_heatmap
 from app.db.session import get_db
 from app.models.orm import Benchmark
@@ -30,7 +24,8 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 
 
 @router.get("/research-gap-heatmap", response_model=ResearchGapHeatmapOut)
-def get_research_gap_heatmap(db: Session = Depends(get_db)):
+@limiter.limit("20/minute")
+def get_research_gap_heatmap(request: Request, db: Session = Depends(get_db)):
     rows = (
         db.query(Benchmark.safety_dimensions, Benchmark.complexity_level)
         .filter(Benchmark.status == "published")

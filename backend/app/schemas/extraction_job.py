@@ -1,3 +1,16 @@
+# Destination path: backend/app/schemas/extraction_job.py
+# Replaces the existing file in full.
+#
+# CHANGE (Known Gap item 17 follow-up, this session): ExtractionJobOut
+# gains an optional failure_reason field, mirroring the new ORM column
+# (see orm.py and alembic migration 0005). Since ExtractionJobOut uses
+# from_attributes=True and the routers in extraction.py return the ORM
+# object directly, this is picked up automatically once the column and
+# migration are applied -- no router changes needed for this field to
+# appear in GET /extraction/jobs and GET /extraction/jobs/{id}.
+# ExtractionJobCreate, ExtractionJobReview, and JobVarianceOut are
+# unchanged.
+
 from __future__ import annotations
 
 import uuid
@@ -46,6 +59,12 @@ class ExtractionJobOut(BaseModel):
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     estimated_cost_usd: Optional[Decimal] = None
+    # Known Gap item 17 follow-up: human-readable reason for a
+    # status="failed" job, e.g. "Ollama Cloud rejected model
+    # 'deepseek-v4-pro': the current account subscription tier does
+    # not include this model...". Null for jobs that never failed, or
+    # for jobs that failed before this column existed.
+    failure_reason: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime]
 

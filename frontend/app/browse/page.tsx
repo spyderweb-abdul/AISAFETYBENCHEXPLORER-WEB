@@ -1,19 +1,41 @@
+// Destination path: frontend/app/browse/page.tsx
+// Replaces the existing file in full.
+//
+// CHANGES in this version (Known Gap item 19 fix, this session):
+// The Use Case dropdown no longer imports the hardcoded
+// USE_CASE_CATEGORIES constant from lib/api.ts (removed there in this
+// same session). It now reads vocab.use_cases, same as every other
+// controlled-vocabulary dropdown on this page (Task Type, Complexity
+// Level, Language Support) -- closing the drift risk where the
+// frontend's own copy of the category list could silently diverge
+// from app/core/use_case_classifier.py's real output space.
+//
+// This build also carries forward the earlier Phase 5 session's
+// changes: License and Language Support as real server-side filters,
+// a Release Date range filter, and the published-only CSV/Excel
+// export section.
+
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Benchmark, USE_CASE_CATEGORIES, Vocab, fetchVocab, listBenchmarks } from "../../lib/api";
+import {
+  Benchmark,
+  Vocab,
+  exportPublicCsvUrl,
+  exportPublicXlsxUrl,
+  fetchVocab,
+  listBenchmarks,
+} from "../../lib/api";
 import ComplexityBadge from "../../components/ComplexityBadge";
 
 /**
- * Phase 5 browse/filter page. Updated (2026-08-23) to add a real,
- * server-side Use Case filter now that use_cases is a first-class
- * array column (app/core/use_case_classifier.py), closing the gap
- * flagged when this page first shipped -- Use Case filtering was
- * deferred entirely back then since no backend data model existed for
- * it. License and Language Support remain client-side filters (see
- * note below); Task Type, Complexity Level, Use Case, and Search are
- * all real server-side query params today.
+ * Phase 5 browse/filter page. Task Type, Complexity Level, Use Case,
+ * Search, License, Language Support, and Release Date are all real
+ * server-side query params against GET /benchmarks. Every
+ * controlled-vocabulary dropdown (Task Type, Use Case, Complexity
+ * Level, Language Support) is driven by GET /vocab -- there is no
+ * hardcoded category list left in this component.
  */
 export default function BrowsePage() {
   const [benchmarks, setBenchmarks] = useState<Benchmark[]>([]);
@@ -27,6 +49,8 @@ export default function BrowsePage() {
   const [complexity, setComplexity] = useState("");
   const [license, setLicense] = useState("");
   const [languageSupport, setLanguageSupport] = useState("");
+  const [releaseDateFrom, setReleaseDateFrom] = useState("");
+  const [releaseDateTo, setReleaseDateTo] = useState("");
 
   async function load() {
     setLoading(true);
@@ -37,6 +61,10 @@ export default function BrowsePage() {
       if (taskType) params.task_type = taskType;
       if (useCase) params.use_case = useCase;
       if (complexity) params.complexity_level = complexity;
+      if (license) params.license = license;
+      if (languageSupport) params.language_support = languageSupport;
+      if (releaseDateFrom) params.release_date_from = releaseDateFrom;
+      if (releaseDateTo) params.release_date_to = releaseDateTo;
       const data = await listBenchmarks(params);
       setBenchmarks(data);
     } catch {
@@ -53,25 +81,18 @@ export default function BrowsePage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, taskType, useCase, complexity]);
-
-  const filtered = useMemo(() => {
-    return benchmarks.filter((b) => {
-      if (license && !(b.license ?? "").toLowerCase().includes(license.toLowerCase())) return false;
-      if (languageSupport && !b.language_support?.includes(languageSupport)) return false;
-      return true;
-    });
-  }, [benchmarks, license, languageSupport]);
+  }, [search, taskType, useCase, complexity, license, languageSupport, releaseDateFrom, releaseDateTo]);
 
   return (
     <div className="container">
       <div className="topbar">
         <h1 style={{ margin: 0 }}>AISafetyBenchExplorer -- Browse Benchmarks</h1>
-        <Link href="/browse/heatmap"><button className="secondary">View Research Gap Heatmap</button></Link>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Link href="/browse/heatmap"><button className="secondary">View Research Gap Heatmap</button></Link>
+        </div>
       </div>
       <p style={{ color: "#666", fontSize: 13, marginTop: -8, marginBottom: 20 }}>
-        {filtered.length} published benchmark{filtered.length === 1 ? "" : "s"} shown
-        {benchmarks.length !== filtered.length ? ` (filtered from ${benchmarks.length} loaded)` : ""}.
+        {benchmarks.length} published benchmark{benchmarks.length === 1 ? "" : "s"} shown.
       </p>
 
       <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -89,7 +110,7 @@ export default function BrowsePage() {
         </select>
         <select value={useCase} onChange={(e) => setUseCase(e.target.value)}>
           <option value="">All use cases</option>
-          {USE_CASE_CATEGORIES.map((u) => (
+          {(vocab?.use_cases ?? []).map((u) => (
             <option key={u} value={u}>{u}</option>
           ))}
         </select>
@@ -111,6 +132,28 @@ export default function BrowsePage() {
           onChange={(e) => setLicense(e.target.value)}
           style={{ minWidth: 160 }}
         />
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666" }}>
+          Released from
+          <input
+            type="date"
+            value={releaseDateFrom}
+            onChange={(e) => setReleaseDateFrom(e.target.value)}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666" }}>
+          to
+          <input
+            type="date"
+            value={releaseDateTo}
+            onChange={(e) => setReleaseDateTo(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="card" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <span style={{ fontSize: 13, color: "#666" }}>Export published benchmarks:</span>
+        <a href={exportPublicXlsxUrl()}><button className="secondary">Download Excel (.xlsx)</button></a>
+        <a href={exportPublicCsvUrl()}><button className="secondary">Download CSV</button></a>
       </div>
 
       <div className="card">
@@ -118,7 +161,7 @@ export default function BrowsePage() {
           <p>Loading...</p>
         ) : error ? (
           <p className="error">{error}</p>
-        ) : filtered.length === 0 ? (
+        ) : benchmarks.length === 0 ? (
           <p style={{ color: "#666" }}>No benchmarks match these filters.</p>
         ) : (
           <table>
@@ -133,7 +176,7 @@ export default function BrowsePage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((b) => (
+              {benchmarks.map((b) => (
                 <tr key={b.id}>
                   <td><Link href={`/browse/${b.id}`}>{b.benchmark_name}</Link></td>
                   <td>{b.task_type.join(", ")}</td>

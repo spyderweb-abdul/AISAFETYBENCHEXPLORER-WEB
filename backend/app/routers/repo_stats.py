@@ -1,17 +1,23 @@
-"""
-app/routers/repo_stats.py
-
-Admin router for Phase 4 manual/bulk scraper triggers (roadmap item 13)
-and repo_stats history / GitHub quota visibility (roadmap items 14/15).
-Follows the same require_admin + audit-log pattern used in benchmarks.py
-and extraction.py. Registered in app/main.py.
-"""
+# Destination path: backend/app/routers/repo_stats.py
+# Replaces the existing file in full.
+#
+# CHANGES (Phase 5 gap closure, this session):
+# GET /repo-stats/benchmarks/{benchmark_id} is the one public,
+# unauthenticated route in this router (it has no Depends(require_admin)
+# or Depends(get_current_user), unlike every other route here) and is
+# named explicitly in Known Gap item 22. Added an explicit slowapi rate
+# limit (60/minute, matching the same tier used for GET /benchmarks and
+# GET /benchmarks/{id}) plus the required `request: Request` parameter.
+# The admin-only routes (github-rate-limit, refresh, refresh-all) are
+# unchanged -- they already require require_admin and are not part of
+# the public-endpoint rate-limiting gap; they still benefit from the
+# 100/minute global default_limits floor configured in main.py.
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -19,6 +25,7 @@ from app.core.audit import log_action
 from app.core.config import settings
 from app.core.deps import require_admin
 from app.core.github_rate_limit import check_github_rate_limit
+from app.core.rate_limit import limiter
 from app.core.tasks import refresh_all_repo_stats, refresh_repo_stats_for_benchmark
 from app.db.session import get_db
 from app.models.orm import Benchmark, RepoStat
@@ -28,7 +35,9 @@ router = APIRouter(prefix="/repo-stats", tags=["repo-stats"])
 
 
 @router.get("/benchmarks/{benchmark_id}", response_model=list[RepoStatsOut])
+@limiter.limit("60/minute")
 def get_repo_stats_for_benchmark(
+    request: Request,
     benchmark_id: UUID,
     history: bool = Query(
         False,

@@ -1,3 +1,11 @@
+# Destination path: backend/requirements.txt
+# Replaces the existing file in full.
+#
+# CHANGE (Phase 5 gap closure, this session): added slowapi for
+# rate limiting the public read-only endpoints (see
+# app/core/rate_limit.py, main.py, and the updated routers).
+# Everything else is unchanged.
+
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 sqlalchemy>=2.0.25
@@ -21,3 +29,4 @@ httpx==0.26.0
 tenacity==8.2.3
 celery==5.3.6
 redis==5.0.1
+slowapi>=0.1.9
