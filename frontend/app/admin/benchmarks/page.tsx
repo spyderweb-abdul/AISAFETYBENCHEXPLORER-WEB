@@ -1,8 +1,21 @@
+// Destination path: frontend/app/admin/benchmarks/page.tsx
+// Replaces the existing file in full.
+//
+// CHANGE (Known Gap item 19 fix, this session): the Use Case filter
+// dropdown previously imported the hardcoded USE_CASE_CATEGORIES
+// constant from lib/api.ts (removed there in this same session). This
+// page had no vocab fetch at all before now -- added the same
+// fetchVocab()-on-mount pattern already used by BrowsePage and
+// BenchmarkForm, and the dropdown now reads vocab.use_cases instead of
+// a hardcoded list, closing the same drift risk fixed on the public
+// /browse page. No other behavior (search, complexity/status filters,
+// delete, export link) changed.
+
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Benchmark, USE_CASE_CATEGORIES, deleteBenchmark, exportXlsxUrl, listBenchmarks } from "../../../lib/api";
+import { Benchmark, Vocab, deleteBenchmark, exportXlsxUrl, fetchVocab, listBenchmarks } from "../../../lib/api";
 import ComplexityBadge from "../../../components/ComplexityBadge";
 
 const STATUS_BADGE_STYLE: Record<string, { background: string; color: string }> = {
@@ -22,6 +35,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function BenchmarksListPage() {
   const [benchmarks, setBenchmarks] = useState<Benchmark[]>([]);
+  const [vocab, setVocab] = useState<Vocab | null>(null);
   const [search, setSearch] = useState("");
   const [complexity, setComplexity] = useState("");
   const [status, setStatus] = useState("");
@@ -39,6 +53,10 @@ export default function BenchmarksListPage() {
     setBenchmarks(data);
     setLoading(false);
   }
+
+  useEffect(() => {
+    fetchVocab().then(setVocab).catch(() => setVocab(null));
+  }, []);
 
   useEffect(() => { load(); }, [search, complexity, status, useCase]);
 
@@ -70,7 +88,7 @@ export default function BenchmarksListPage() {
         </select>
         <select value={useCase} onChange={(e) => setUseCase(e.target.value)}>
           <option value="">All use cases</option>
-          {USE_CASE_CATEGORIES.map((u) => (
+          {(vocab?.use_cases ?? []).map((u) => (
             <option key={u} value={u}>{u}</option>
           ))}
         </select>

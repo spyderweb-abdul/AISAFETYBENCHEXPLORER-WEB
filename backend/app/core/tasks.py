@@ -1,26 +1,74 @@
+# Destination path: backend/app/core/tasks.py
+# Replaces the existing file in full.
+#
+# CHANGES (Phase 6 item 1, this session): adds a weekly citation-count
+# refresh, mirroring the exact Celery task pattern already proven for
+# refresh_repo_stats_for_benchmark / refresh_all_repo_stats:
+# - refresh_citation_count_for_benchmark(benchmark_id): manual/single
+#   trigger, reuses paper_fetcher.py's existing
+#   fetch_semantic_scholar_citation_count() (already used during
+#   Phase 3 extraction, so this is not a new external integration).
+# - refresh_all_citation_counts(): scheduled bulk trigger (Celery Beat,
+#   weekly). Deliberately processes benchmarks SEQUENTIALLY within one
+#   task rather than fanning out into N separate delayed tasks the way
+#   refresh_all_repo_stats() does for GitHub/HuggingFace -- Semantic
+#   Scholar's unauthenticated tier is limited to 1 request/second, and
+#   fetch_semantic_scholar_citation_count() already retries internally
+#   on 429s, so a small fixed delay between sequential calls is a
+#   simpler and more predictable way to stay under that limit than
+#   coordinating backoff across many concurrent Celery workers.
+# - _apply_citation_refresh(): updates Benchmark.cited_by and, per the
+#   roadmap's Phase 6 item 3 ask ("feeding the Popular classification
+#   trigger automatically"), promotes complexity_level to "Popular"
+#   if the new count crosses complexity_classifier.py's
+#   POPULAR_CITATION_THRESHOLD (100) and the benchmark isn't already
+#   Popular. This only uses the citation_count OR-branch of classify()'s
+#   three Popular conditions -- the other two
+#   (cited_as_baseline_in_3plus_papers, is_community_standard) and all
+#   High/Medium signal booleans are not persisted on the Benchmark row
+#   today (they only exist transiently in the admin form's classifier
+#   UI), so a full re-classification is out of scope for an automated
+#   citation-only refresh; this never demotes an existing
+#   classification, only ever promotes to Popular when citation count
+#   alone already justifies it.
+# - Every actual change (citation count and/or complexity promotion)
+#   is written to audit_log via the existing log_action() helper, with
+#   changed_by=None to distinguish system-triggered changes from
+#   human admin actions in the version history (see
+#   VersionHistoryPanel.tsx).
+# celery_app.py's Beat schedule (added in this same session) now also
+# includes a weekly "refresh-all-citations-weekly" entry calling
+# refresh_all_citation_counts. All existing repo_stats task code below
+# is unchanged.
+
 """
 app/core/tasks.py
 
-Celery tasks wrapping github_scrapper.py and hf_scrapper.py.
+Celery tasks wrapping github_scrapper.py and hf_scrapper.py, plus
+(Phase 6) paper_fetcher.py's Semantic Scholar citation lookup.
 
 Provides:
 - refresh_repo_stats_for_benchmark(benchmark_id): manual/single trigger
 - refresh_all_repo_stats(): scheduled bulk trigger (Celery Beat, weekly)
-
-
+- refresh_citation_count_for_benchmark(benchmark_id): manual/single trigger
+- refresh_all_citation_counts(): scheduled bulk trigger (Celery Beat, weekly)
 """
 
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 
+from app.core.audit import log_action
 from app.core.celery_app import celery_app
+from app.core.complexity_classifier import POPULAR_CITATION_THRESHOLD
 from app.core.config import settings
 from app.core.github_rate_limit import has_sufficient_quota
 from app.core.github_scrapper import fetch_github_stats
 from app.core.hf_scrapper import fetch_hf_dataset_stats, fetch_hf_model_stats
+from app.core.paper_fetcher import fetch_semantic_scholar_citation_count
 from app.db.session import SessionLocal
 from app.models.orm import Benchmark, RepoStat
 
@@ -30,6 +78,11 @@ logger = logging.getLogger(__name__)
 # Phase 4 section of PROJECT_ROADMAP.md). Used to estimate quota needed
 # for a bulk refresh before queuing it.
 _GITHUB_REQUESTS_PER_REPO = 3
+
+# Stay comfortably under Semantic Scholar's unauthenticated 1 req/sec
+# limit during a sequential bulk citation refresh. Not needed for the
+# single-benchmark manual trigger, which only ever makes one call.
+_SEMANTIC_SCHOLAR_DELAY_SECONDS = 1.1
 
 
 def _insert_repo_stats_snapshot(db, benchmark_id, source: str, stats) -> None:
@@ -150,3 +203,155 @@ def refresh_all_repo_stats() -> dict:
         refresh_repo_stats_for_benchmark.delay(benchmark_id)
 
     return {"queued": len(benchmark_ids), "queued_at": datetime.now(timezone.utc).isoformat()}
+
+
+def _citation_search_term(benchmark: Benchmark) -> str | None:
+    """Best available search key for a Semantic Scholar lookup: prefer
+    the paper_link (more precise, often a DOI or arXiv URL) and fall
+    back to the paper title. Returns None if neither is available, so
+    the caller can skip the benchmark rather than searching on an
+    empty string."""
+    if benchmark.paper_link:
+        return benchmark.paper_link
+    if benchmark.benchmark_paper_title:
+        return benchmark.benchmark_paper_title
+    return None
+
+
+def _apply_citation_refresh(db, benchmark: Benchmark, new_count: int) -> bool:
+    """Updates benchmark.cited_by and, if the new count now crosses
+    POPULAR_CITATION_THRESHOLD, promotes complexity_level to "Popular".
+    Never demotes an existing classification and never touches the
+    other (unpersisted) complexity signals -- see the module docstring
+    above for the full rationale. Returns True if the row actually
+    changed, so the caller knows whether to write an audit_log entry.
+    """
+    before_cited_by = benchmark.cited_by
+    before_complexity_level = benchmark.complexity_level
+
+    benchmark.cited_by = new_count
+
+    promoted = False
+    if new_count > POPULAR_CITATION_THRESHOLD and benchmark.complexity_level != "Popular":
+        benchmark.complexity_level = "Popular"
+        benchmark.complexity_justification = (
+            f"Popular -- citation count ({new_count}) exceeds "
+            f"{POPULAR_CITATION_THRESHOLD} (auto-updated by the weekly "
+            "citation refresh job)."
+        )
+        promoted = True
+
+    changed = (new_count != before_cited_by) or promoted
+    if changed:
+        log_action(
+            db, table_name="benchmarks", record_id=benchmark.id,
+            action="citation_refresh_promoted_to_popular" if promoted else "citation_refresh",
+            changed_by=None,
+            diff={
+                "before_cited_by": before_cited_by,
+                "after_cited_by": new_count,
+                "before_complexity_level": before_complexity_level,
+                "after_complexity_level": benchmark.complexity_level,
+            },
+        )
+    return changed
+
+
+@celery_app.task(name="app.core.tasks.refresh_citation_count_for_benchmark", bind=True, max_retries=2)
+def refresh_citation_count_for_benchmark(self, benchmark_id: str) -> dict:
+    """Manual/single-benchmark trigger, mirroring
+    refresh_repo_stats_for_benchmark's pattern. Call directly for
+    testing, or wire up an admin "Refresh Citation Count" button later
+    the same way repo_stats.py exposes refresh_repo_stats_for_benchmark."""
+    db = SessionLocal()
+    try:
+        benchmark = db.query(Benchmark).filter(Benchmark.id == benchmark_id).first()
+        if benchmark is None:
+            logger.warning("refresh_citation_count_for_benchmark: benchmark %s not found", benchmark_id)
+            return {"benchmark_id": benchmark_id, "error": "benchmark_not_found"}
+
+        search_term = _citation_search_term(benchmark)
+        if not search_term:
+            logger.info(
+                "refresh_citation_count_for_benchmark: skipping %s -- no paper_link or paper title.",
+                benchmark_id,
+            )
+            return {"benchmark_id": benchmark_id, "skipped": "no_search_term"}
+
+        new_count = fetch_semantic_scholar_citation_count(
+            search_term, api_key=settings.SEMANTIC_SCHOLAR_API_KEY
+        )
+        if new_count is None:
+            logger.warning(
+                "refresh_citation_count_for_benchmark: Semantic Scholar lookup failed for %s.",
+                benchmark_id,
+            )
+            return {"benchmark_id": benchmark_id, "error": "citation_lookup_failed"}
+
+        changed = _apply_citation_refresh(db, benchmark, new_count)
+        db.commit()
+        return {"benchmark_id": benchmark_id, "new_cited_by": new_count, "changed": changed}
+    except Exception as exc:
+        db.rollback()
+        logger.error("refresh_citation_count_for_benchmark failed for %s: %s", benchmark_id, exc)
+        raise self.retry(exc=exc, countdown=30)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.core.tasks.refresh_all_citation_counts")
+def refresh_all_citation_counts() -> dict:
+    """Scheduled bulk trigger, run weekly via Celery Beat (see
+    celery_app.py). Processes benchmarks sequentially within this one
+    task -- see the module docstring above for why this deliberately
+    does not fan out into per-benchmark delayed tasks the way
+    refresh_all_repo_stats() does. Also exposed for a manual
+    "Refresh All Citations" admin action later.
+    """
+    db = SessionLocal()
+    try:
+        benchmarks = (
+            db.query(Benchmark)
+            .filter(Benchmark.status != "rejected")
+            .all()
+        )
+    finally:
+        db.close()
+
+    updated = 0
+    skipped = 0
+    failed = 0
+
+    db = SessionLocal()
+    try:
+        for benchmark in benchmarks:
+            search_term = _citation_search_term(benchmark)
+            if not search_term:
+                skipped += 1
+                continue
+
+            new_count = fetch_semantic_scholar_citation_count(
+                search_term, api_key=settings.SEMANTIC_SCHOLAR_API_KEY
+            )
+            if new_count is None:
+                failed += 1
+                time.sleep(_SEMANTIC_SCHOLAR_DELAY_SECONDS)
+                continue
+
+            if _apply_citation_refresh(db, benchmark, new_count):
+                updated += 1
+            time.sleep(_SEMANTIC_SCHOLAR_DELAY_SECONDS)
+
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.error("refresh_all_citation_counts failed mid-run: %s", exc)
+        raise
+    finally:
+        db.close()
+
+    logger.info(
+        "refresh_all_citation_counts: processed %d benchmarks (updated=%d, skipped=%d, failed=%d).",
+        len(benchmarks), updated, skipped, failed,
+    )
+    return {"processed": len(benchmarks), "updated": updated, "skipped": skipped, "failed": failed}

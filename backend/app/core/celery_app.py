@@ -1,8 +1,18 @@
+# Destination path: backend/app/core/celery_app.py
+# Replaces the existing file in full.
+#
+# CHANGE (Phase 6 item 1, this session): added a weekly Beat schedule
+# entry for the new refresh_all_citation_counts task (see tasks.py).
+# Scheduled for Sunday 04:00 UTC, one hour after the existing
+# refresh-all-repo-stats-weekly job (03:00 UTC), so the two weekly
+# jobs don't compete for the same worker slot at the same instant.
+# No other configuration changed.
+
 """
 app/core/celery_app.py
 
-Celery application factory and Beat schedule for Phase 4 scraper jobs.
-New file -- place at app/core/celery_app.py.
+Celery application factory and Beat schedule for Phase 4 scraper jobs
+and the Phase 6 citation refresh job.
 """
 
 from __future__ import annotations
@@ -31,5 +41,9 @@ celery_app.conf.beat_schedule = {
     "refresh-all-repo-stats-weekly": {
         "task": "app.core.tasks.refresh_all_repo_stats",
         "schedule": crontab(day_of_week="sunday", hour=3, minute=0),
+    },
+    "refresh-all-citations-weekly": {
+        "task": "app.core.tasks.refresh_all_citation_counts",
+        "schedule": crontab(day_of_week="sunday", hour=4, minute=0),
     },
 }

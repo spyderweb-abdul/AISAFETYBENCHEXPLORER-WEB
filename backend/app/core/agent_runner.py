@@ -1,16 +1,3 @@
-"""Synchronous agent runner for Phase 3.
-
-Runs the full AISafety_Benchmark_Extraction_Master_Prompt.md methodology
-against a chosen backing model (Phases 0-4: pre-extraction research, Sheet 1
-metadata extraction with controlled vocabulary, complexity classification,
-and the QA checklist), then validates the output against BenchmarkCreate
-and the complexity decision tree before writing the result to the DB as a
-pending benchmark.
-
-No Celery yet (Phase 4 of the PROJECT_ROADMAP, not to be confused with the
-Phase 4 QA Checklist in the master prompt). FastAPI BackgroundTasks
-dispatches this function.
-"""
 from __future__ import annotations
 
 import json
@@ -499,7 +486,6 @@ def _clamp_varchar_fields(raw: dict) -> tuple[dict, list[str]]:
             raw[field] = value[: _VARCHAR_LIMIT - 3].rstrip() + "..."
             truncated.append(field)
     return raw, truncated
-# --- END PATCH ---------------------------------------------------------------
 
 
 def _build_user_message(source_type: str, source_value: str, fetched: dict[str, Any]) -> str:
@@ -718,6 +704,22 @@ def _quality_score(data: dict[str, Any]) -> float:
     filled = sum(1 for k in required if data.get(k))
     return round(filled / len(required), 2)
 
+def _wrap_provider_error(provider: str, model_name: str, exc: Exception) -> Exception:
+    if provider == "ollama":
+        try:
+            import openai
+            if isinstance(exc, openai.PermissionDeniedError):
+                return ValueError(
+                    f"Ollama Cloud rejected model '{model_name}': the current "
+                    "account subscription tier does not include this model "
+                    "(HTTP 403, 'this model requires a subscription'). "
+                    "Upgrade at https://ollama.com/upgrade, then resubmit "
+                    "this job."
+                )
+        except ImportError:
+            pass
+    return exc
+
 
 def run_extraction(
     job_id: uuid.UUID,
@@ -751,14 +753,17 @@ def run_extraction(
             )
 
         provider, model_name = (model_used.split("/", 1) + [model_used])[:2]
-        if provider == "openai":
-            raw, usage = _call_openai(model_name, source_type, source_value, openai_api_key, fetched)
-        elif provider == "anthropic":
-            raw, usage = _call_anthropic(model_name, source_type, source_value, anthropic_api_key, fetched)
-        elif provider == "ollama":
-            raw, usage = _call_ollama(model_name, source_type, source_value, settings.OLLAMA_BASE_URL_CLOUD, settings.OLLAMA_API_KEY, fetched)
-        else:
-            raise ValueError(f"Unknown model provider: {provider}")
+        try:
+            if provider == "openai":
+                raw, usage = _call_openai(model_name, source_type, source_value, openai_api_key, fetched)
+            elif provider == "anthropic":
+                raw, usage = _call_anthropic(model_name, source_type, source_value, anthropic_api_key, fetched)
+            elif provider == "ollama":
+                raw, usage = _call_ollama(model_name, source_type, source_value, settings.OLLAMA_BASE_URL_CLOUD, settings.OLLAMA_API_KEY, fetched)
+            else:
+                raise ValueError(f"Unknown model provider: {provider}")
+        except Exception as provider_exc:
+            raise _wrap_provider_error(provider, model_name, provider_exc) from provider_exc
 
         raw.setdefault("task_type", [])
         raw.setdefault("evaluation_metrics", [])
@@ -856,7 +861,6 @@ def run_extraction(
                     )
             except Exception as exc:
                 logger.warning("Job %s: hf_scrapper raised %s -- continuing without it.", job_id, exc)
-        # --- END Phase 4 block ---------------------------------------------------
 
         create_schema = BenchmarkCreate(**raw)
 
@@ -882,8 +886,7 @@ def run_extraction(
         benchmark.safety_dimensions = classify_safety_dimensions(benchmark.task_type)
         db.add(benchmark)
         db.flush()
-        # Phase 2: persist Sheet 2 (Evaluation Metrics Catalogue) rows now
-        # that benchmark.id exists.
+
         metrics_persisted = _persist_eval_metrics(
             db, benchmark.id, raw.get("evaluation_metrics_catalogue", [])
         )
@@ -898,14 +901,14 @@ def run_extraction(
                 id=uuid.uuid4(),
                 benchmark_id=benchmark.id,
                 source="github",
-                url=raw["code_repository"],          # fixed: no trailing comma inside brackets
+                url=raw["code_repository"],       
                 owner=github_stats.owner,
                 name=github_stats.repo,
                 stars_or_likes=github_stats.stars,
                 forks=github_stats.forks,
                 open_issues=github_stats.open_issues,
                 contributors_count=github_stats.contributors_count,
-                last_commit_at=github_stats.last_commit_at,   # fixed: was last_activity_at
+                last_commit_at=github_stats.last_commit_at,   
                 days_since_last_activity=github_stats.days_since_last_commit,
                 activity_status=github_stats.activity_status,
                 is_archived=github_stats.is_archived,
@@ -920,12 +923,12 @@ def run_extraction(
                 id=uuid.uuid4(),
                 benchmark_id=benchmark.id,
                 source="hf_dataset",
-                url=raw.get("dataset_repository") or "",   # fixed: was missing entirely
+                url=raw.get("dataset_repository") or "", 
                 owner=hf_stats.owner,
                 name=hf_stats.name,
-                stars_or_likes=hf_stats.likes,              # fixed: was likes=
+                stars_or_likes=hf_stats.likes,             
                 downloads=hf_stats.downloads,
-                last_commit_at=hf_stats.last_modified_at,   # fixed: was last_activity_at
+                last_commit_at=hf_stats.last_modified_at,  
                 days_since_last_activity=hf_stats.days_since_last_modified,
                 activity_status=hf_stats.activity_status,
                 is_private=hf_stats.is_private,
@@ -943,9 +946,7 @@ def run_extraction(
         job.requires_review = qs < 0.75
         job.result_benchmark_id = benchmark.id
         job.completed_at = datetime.now(timezone.utc)
-        # Roadmap item 12: persist token usage and estimated cost for
-        # this run, so GET /extraction/jobs/variance can report total
-        # spend per source_value across repeated attempts.
+
         job.input_tokens = usage.get("input_tokens")
         job.output_tokens = usage.get("output_tokens")
         job.estimated_cost_usd = estimate_cost_usd(
@@ -960,22 +961,7 @@ def run_extraction(
         if job:
             job.status = "failed"
             job.completed_at = datetime.now(timezone.utc)
+            job.failure_reason = str(exc)[:2000]
             db.commit()
         logger.exception("Extraction job %s failed: %s", job_id, exc)
 
-
-# TODO (not yet implemented in this runner):
-# - [DONE] Sheet 2 / Evaluation Metrics Catalogue extraction (Phase 2 of the
-#   master prompt).
-# - [DONE] Fuzzy Sheet 1<->Sheet 2 metric name reconciliation (previously an
-#   exact-match crash bug; see _metric_name_variants()).
-# - [DONE] Explicit Phase 0.2 targeted searches (citations, github,
-#   huggingface dataset, license, huggingface card) baked into the system
-#   prompt, with web_search max_uses raised from 5 to 12 and max_tokens
-#   raised from 8192 to 16384 to accommodate the extra search results.
-# - Phase 4 QA checklist enforcement as an explicit second validation pass
-#   (currently only the 8-field quality_score heuristic gates review, plus
-#   the Sheet 1<->Sheet 2 cross-check above).
-# - Live Phase 0.2 web search calls as deterministic tool calls rather than
-#   the model's own agentic browsing loop, for full auditability of which
-#   URLs were actually visited.

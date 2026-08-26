@@ -1,3 +1,12 @@
+// Destination path: frontend/app/admin/benchmarks/[id]/page.tsx
+// Replaces the existing file in full.
+//
+// CHANGE (Phase 6 item 2, this session): added VersionHistoryPanel
+// below RepoStatsPanel, following the exact same layout pattern as
+// every other panel on this page (ReviewPanel, EvalMetricsPanel,
+// RepoStatsPanel) -- a self-contained component that fetches its own
+// data given the benchmarkId. No other section of this page changed.
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -7,6 +16,7 @@ import BenchmarkForm from "../../../../components/BenchmarkForm";
 import EvalMetricsPanel from "../../../../components/EvalMetricsPanel";
 import RepoStatsPanel from "../../../../components/RepoStatsPanel";
 import ReviewPanel from "../../../../components/ReviewPanel";
+import VersionHistoryPanel from "../../../../components/VersionHistoryPanel";
 
 export default function EditBenchmarkPage() {
   const params = useParams();
@@ -41,6 +51,9 @@ export default function EditBenchmarkPage() {
         codeRepository={benchmark.code_repository}
         datasetRepository={benchmark.dataset_repository}
       />
+      {/* Phase 6 item 2: full version history, read-only, reusing the
+          existing audit_log table (populated since Phase 2). */}
+      <VersionHistoryPanel benchmarkId={id} />
     </div>
   );
 }

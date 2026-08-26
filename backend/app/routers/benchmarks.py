@@ -1,11 +1,34 @@
+# Destination path: backend/app/routers/benchmarks.py
+# Replaces the existing file in full.
+#
+# CHANGES (Phase 5 gap closure, this session):
+# 1. list_benchmarks() gains three new real, server-side query params:
+#    license (case-insensitive partial match), language_support (exact
+#    match against the ARRAY(Text) column, same .any() pattern already
+#    used for task_type/use_cases), release_date_from and
+#    release_date_to (inclusive date range against the Date column).
+#    This closes the roadmap's "License and Language Support remain
+#    client-side only" and "Release Date filtering is not yet
+#    implemented at all" gaps (Section 5, Phase 5).
+# 2. list_benchmarks() and get_benchmark() are the two public,
+#    unauthenticated read endpoints named in Known Gap item 22; both
+#    now carry an explicit slowapi rate limit on top of the blanket
+#    default_limits configured in app/core/rate_limit.py and wired in
+#    main.py. Every slowapi-decorated route must accept a `request:
+#    Request` parameter, which is added here for both.
+# No other behavior (create/update/review/delete, admin auth, audit
+# logging) is changed.
+
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.audit import log_action
 from app.core.deps import get_current_user, require_admin
+from app.core.rate_limit import limiter
 from app.core.safety_dimension_classifier import classify_safety_dimensions
 from app.core.use_case_classifier import classify_use_cases
 from app.db.session import get_db
@@ -29,13 +52,41 @@ def _stamp_classifications(obj: Benchmark) -> None:
 
 
 @router.get("", response_model=list[BenchmarkOut])
+@limiter.limit("60/minute")
 def list_benchmarks(
+    request: Request,
     task_type: Optional[str] = Query(None),
     use_case: Optional[str] = Query(
         None,
         description="Filter by a Phase 5 use-case category (see app/core/use_case_classifier.py's USE_CASE_CATEGORIES).",
     ),
     complexity_level: Optional[str] = Query(None),
+    license: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by license, case-insensitive partial match (e.g. "
+            "'MIT' matches 'MIT License'). Closes the Phase 5 gap where "
+            "License was a client-side-only filter on /browse."
+        ),
+    ),
+    language_support: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by a supported language from app/core/"
+            "controlled_vocab.py's LANGUAGE_SUPPORT list (exact match "
+            "against the language_support array column). Closes the "
+            "Phase 5 gap where Language Support was a client-side-only "
+            "filter on /browse."
+        ),
+    ),
+    release_date_from: Optional[date] = Query(
+        None,
+        description="Only include benchmarks with release_date on or after this date (YYYY-MM-DD).",
+    ),
+    release_date_to: Optional[date] = Query(
+        None,
+        description="Only include benchmarks with release_date on or before this date (YYYY-MM-DD).",
+    ),
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(
         None,
@@ -66,13 +117,22 @@ def list_benchmarks(
         q = q.filter(Benchmark.use_cases.any(use_case))
     if complexity_level:
         q = q.filter(Benchmark.complexity_level == complexity_level)
+    if license:
+        q = q.filter(Benchmark.license.ilike(f"%{license}%"))
+    if language_support:
+        q = q.filter(Benchmark.language_support.any(language_support))
+    if release_date_from:
+        q = q.filter(Benchmark.release_date >= release_date_from)
+    if release_date_to:
+        q = q.filter(Benchmark.release_date <= release_date_to)
     if search:
         q = q.filter(Benchmark.benchmark_name.ilike(f"%{search}%"))
     return q.order_by(Benchmark.benchmark_name).offset(offset).limit(limit).all()
 
 
 @router.get("/{benchmark_id}", response_model=BenchmarkOut)
-def get_benchmark(benchmark_id: UUID, db: Session = Depends(get_db)):
+@limiter.limit("60/minute")
+def get_benchmark(request: Request, benchmark_id: UUID, db: Session = Depends(get_db)):
     obj = db.query(Benchmark).filter(Benchmark.id == benchmark_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Benchmark not found")
@@ -148,8 +208,7 @@ def review_benchmark(
     ExtractionJob exists (result_benchmark_id == benchmark_id), updates
     its status too for consistency with POST /extraction/jobs/{id}/review
     -- but does not require one to exist, since the review action
-    belongs to the benchmark, not the job.
-    """
+    belongs to the benchmark, not the job."""
     obj = db.query(Benchmark).filter(Benchmark.id == benchmark_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Benchmark not found")

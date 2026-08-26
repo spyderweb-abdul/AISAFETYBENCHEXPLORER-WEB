@@ -1,3 +1,21 @@
+// Destination path: frontend/lib/api.ts
+// Replaces the existing file in full.
+//
+// CHANGE (Known Gap item 19 fix, this session): removed the hardcoded
+// USE_CASE_CATEGORIES constant entirely. It was a manually-copied
+// duplicate of app/core/use_case_classifier.py's real category list
+// and had no mechanism to stay in sync with the backend -- the
+// backend's own controlled_vocab.py copy had already drifted (missing
+// "Customer Service Chatbots"), and this frontend copy only happened
+// to still be correct by luck. Consumers (browse/page.tsx,
+// admin/benchmarks/page.tsx) now read use_cases directly off the
+// Vocab returned by fetchVocab() / GET /vocab, which is itself now
+// re-exported from the classifier (see controlled_vocab.py), making
+// it the single source of truth end to end. No other export,
+// interface, or function changed from the previous version of this
+// file (includes the exportPublicXlsxUrl/exportPublicCsvUrl additions
+// from the earlier Phase 5 session).
+
 import axios from "axios";
 import Cookies from "js-cookie";
 
@@ -12,15 +30,6 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
-
-export const USE_CASE_CATEGORIES = [
-  "Medical AI",
-  "Financial Services",
-  "Customer Service Chatbots",
-  "Content Moderation",
-  "Education",
-  "General Purpose",
-];
 
 export interface Benchmark {
   id: string;
@@ -92,6 +101,9 @@ export interface ExtractionJob {
   input_tokens: number | null;
   output_tokens: number | null;
   estimated_cost_usd: number | null;
+  /** Known Gap item 17 follow-up: human-readable reason for a
+   * status="failed" job. Null for jobs that never failed. */
+  failure_reason?: string | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -172,6 +184,18 @@ export async function fetchAuditLog(params?: Record<string, string>) {
 
 export function exportXlsxUrl() {
   return `${API_BASE_URL}/export/xlsx`;
+}
+
+/** Phase 5: public, unauthenticated, published-only Excel export used
+ * by the /browse dashboard's Export section. Backs GET /export/public/xlsx. */
+export function exportPublicXlsxUrl() {
+  return `${API_BASE_URL}/export/public/xlsx`;
+}
+
+/** Phase 5: public, unauthenticated, published-only CSV export used
+ * by the /browse dashboard's Export section. Backs GET /export/public/csv. */
+export function exportPublicCsvUrl() {
+  return `${API_BASE_URL}/export/public/csv`;
 }
 
 export async function submitExtractionJob(payload: {

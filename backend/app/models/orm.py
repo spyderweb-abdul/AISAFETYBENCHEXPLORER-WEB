@@ -1,3 +1,12 @@
+# Destination path: backend/app/models/orm.py
+# Replaces the existing file in full.
+#
+# CHANGE (Known Gap item 17 follow-up, this session): ExtractionJob
+# gains a nullable failure_reason Text column, populated by
+# agent_runner.py's except block on any job failure (paired with
+# alembic migration 0005_add_extraction_job_failure_reason.py). No
+# other model, column, or relationship is changed.
+
 import uuid
 from datetime import datetime
 from sqlalchemy import (
@@ -134,6 +143,12 @@ class ExtractionJob(Base):
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
     estimated_cost_usd = Column(Numeric(10, 4), nullable=True)
+    # Known Gap item 17 follow-up: human-readable reason for a
+    # status="failed" job (e.g. Ollama Cloud's 403 subscription-tier
+    # rejection, or any other exception message), truncated to 2000
+    # chars by agent_runner.py before being written here. Null for
+    # jobs that never failed.
+    failure_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
 
