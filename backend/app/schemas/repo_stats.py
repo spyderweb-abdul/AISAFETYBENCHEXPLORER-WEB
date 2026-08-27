@@ -1,19 +1,3 @@
-"""
-app/schemas/repo_stats.py
-
-Pydantic output schema for the RepoStat ORM model (app/models/orm.py).
-
-Fix (roadmap item 13): the previous version of this file declared fields
-that do not exist on the RepoStat model at all (stars, likes,
-last_activity_at). RepoStat stores a single combined stars_or_likes
-column and last_commit_at, not last_activity_at. Because RepoStatsOut
-used from_attributes=True, Pydantic would try to read .stars, .likes,
-and .last_activity_at directly off a RepoStat instance and raise a
-validation error on every GET /repo-stats/benchmarks/{id} call.
-benchmark_id and url are also NOT NULL on the model, so they are typed
-as required here instead of Optional.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime

@@ -1,16 +1,11 @@
 # Destination path: backend/app/main.py
 # Replaces the existing file in full.
 #
-# CHANGES (Phase 5 gap closure, this session):
-# Wires up the slowapi rate limiter defined in app/core/rate_limit.py:
-# app.state.limiter holds the Limiter instance (required by slowapi's
-# @limiter.limit(...) decorators used in benchmarks.py, export.py,
-# repo_stats.py, and stats.py), the RateLimitExceeded exception handler
-# returns a clean 429 instead of an unhandled exception, and
-# SlowAPIMiddleware enforces the limiter's default_limits globally so
-# every route -- including ones not individually decorated -- gets a
-# baseline rate limit. No router registration, CORS config, or the
-# /health endpoint changed.
+# CHANGE (Phase 6 items 3/4, this session): registers three new
+# routers -- submissions (gated community submission workflow),
+# notifications (per-user in-app inbox), and users (minimal admin-only
+# user management, needed for the is_trusted_submitter toggle). No
+# other router, middleware, or the /health endpoint changed.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,12 +15,26 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
-from app.routers import audit, auth, benchmarks, complexity, export, extraction, metrics, stats, vocab, repo_stats
+from app.routers import (
+    audit,
+    auth,
+    benchmarks,
+    complexity,
+    export,
+    extraction,
+    metrics,
+    notifications,
+    repo_stats,
+    stats,
+    submissions,
+    users,
+    vocab,
+)
 
 app = FastAPI(
     title="AISafetyBenchExplorer API",
-    version="0.4.0",
-    description="Phase 5: researcher dashboard, public read-only API, rate limiting on public endpoints.",
+    version="0.5.0",
+    description="Phase 6: gated community submissions, admin review workflow, and notifications.",
 )
 
 app.state.limiter = limiter
@@ -50,6 +59,9 @@ app.include_router(vocab.router)
 app.include_router(extraction.router)
 app.include_router(repo_stats.router)
 app.include_router(stats.router)
+app.include_router(submissions.router)
+app.include_router(notifications.router)
+app.include_router(users.router)
 
 
 @app.get("/health")

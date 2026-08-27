@@ -1,4 +1,4 @@
-"""Deterministic paper-fetching tool for Phase 3 extraction.
+"""Deterministic paper-fetching tool.
 
 The backing LLM (OpenAI/Anthropic chat completion) has no built-in ability to
 fetch external URLs -- it can only reason from its training data. This module

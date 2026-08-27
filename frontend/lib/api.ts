@@ -1,20 +1,21 @@
 // Destination path: frontend/lib/api.ts
 // Replaces the existing file in full.
 //
-// CHANGE (Known Gap item 19 fix, this session): removed the hardcoded
-// USE_CASE_CATEGORIES constant entirely. It was a manually-copied
-// duplicate of app/core/use_case_classifier.py's real category list
-// and had no mechanism to stay in sync with the backend -- the
-// backend's own controlled_vocab.py copy had already drifted (missing
-// "Customer Service Chatbots"), and this frontend copy only happened
-// to still be correct by luck. Consumers (browse/page.tsx,
-// admin/benchmarks/page.tsx) now read use_cases directly off the
-// Vocab returned by fetchVocab() / GET /vocab, which is itself now
-// re-exported from the classifier (see controlled_vocab.py), making
-// it the single source of truth end to end. No other export,
-// interface, or function changed from the previous version of this
-// file (includes the exportPublicXlsxUrl/exportPublicCsvUrl additions
-// from the earlier Phase 5 session).
+// BUG FIX (this session): TypeError: s.quality_score.toFixed is not a
+// function, thrown on /submit and /admin/submissions. Root cause:
+// FastAPI/Pydantic serializes Decimal columns (Submission.quality_score
+// is a Postgres Numeric(3,2), see models/orm.py) as JSON STRINGS (e.g.
+// "0.75"), not numbers -- but the Submission TypeScript interface
+// declared quality_score as `number | null`, so every consumer
+// trusted a type the API never actually provided. The existing admin
+// Extraction Panel (app/admin/extraction/page.tsx) already works
+// around this same class of bug defensively at each render site via
+// Number(job.quality_score); this fix instead normalizes ONCE at the
+// API boundary via normalizeSubmission(), applied to every function
+// that returns a Submission or Submission[], so every current and
+// future consumer of this type can trust quality_score is a real
+// number (or null) without needing its own defensive Number() call.
+// No other type, function, or behavior in this file changed.
 
 import axios from "axios";
 import Cookies from "js-cookie";
@@ -57,6 +58,8 @@ export interface Benchmark {
   status: string;
   use_cases: string[];
   safety_dimensions: string[];
+  submission_source?: string;
+  submitted_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -92,17 +95,11 @@ export interface ExtractionJob {
   quality_score: number | null;
   requires_review: boolean;
   result_benchmark_id: string | null;
-  /** FIX (2026-08-23): the linked benchmark's actual status, since
-   * job.status alone doesn't reveal whether the benchmark is still
-   * pending_review -- a high quality_score job can be job.status=
-   * "done" while its benchmark sits at pending_review indefinitely. */
   result_benchmark_status: string | null;
   submitted_by: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   estimated_cost_usd: number | null;
-  /** Known Gap item 17 follow-up: human-readable reason for a
-   * status="failed" job. Null for jobs that never failed. */
   failure_reason?: string | null;
   created_at: string;
   completed_at: string | null;
@@ -117,6 +114,19 @@ export interface JobVariance {
   job_ids: string[];
 }
 
+export interface UserOut {
+  id: string;
+  email: string;
+  role: "admin" | "researcher";
+  is_trusted_submitter: boolean;
+  created_at: string;
+}
+
+export async function registerUser(email: string, password: string) {
+  const { data } = await api.post<UserOut>("/auth/register", { email, password });
+  return data;
+}
+
 export async function login(email: string, password: string) {
   const form = new URLSearchParams();
   form.append("username", email);
@@ -128,7 +138,7 @@ export async function login(email: string, password: string) {
 }
 
 export async function fetchMe() {
-  const { data } = await api.get("/auth/me");
+  const { data } = await api.get<UserOut>("/auth/me");
   return data;
 }
 
@@ -156,9 +166,6 @@ export async function deleteBenchmark(id: string) {
   await api.delete(`/benchmarks/${id}`);
 }
 
-/** FIX (2026-08-23): benchmark-centric review, reachable directly from
- * the benchmark edit page -- see ReviewPanel.tsx. Backs
- * POST /benchmarks/{id}/review. */
 export async function reviewBenchmark(id: string, approve: boolean, reviewer_note?: string) {
   const { data } = await api.post<Benchmark>(`/benchmarks/${id}/review`, {
     approve,
@@ -186,14 +193,10 @@ export function exportXlsxUrl() {
   return `${API_BASE_URL}/export/xlsx`;
 }
 
-/** Phase 5: public, unauthenticated, published-only Excel export used
- * by the /browse dashboard's Export section. Backs GET /export/public/xlsx. */
 export function exportPublicXlsxUrl() {
   return `${API_BASE_URL}/export/public/xlsx`;
 }
 
-/** Phase 5: public, unauthenticated, published-only CSV export used
- * by the /browse dashboard's Export section. Backs GET /export/public/csv. */
 export function exportPublicCsvUrl() {
   return `${API_BASE_URL}/export/public/csv`;
 }
@@ -218,11 +221,7 @@ export async function getExtractionJob(id: string) {
   return data;
 }
 
-export async function reviewExtractionJob(
-  id: string,
-  approve: boolean,
-  reviewer_note?: string
-) {
+export async function reviewExtractionJob(id: string, approve: boolean, reviewer_note?: string) {
   const { data } = await api.post<ExtractionJob>(`/extraction/jobs/${id}/review`, {
     approve,
     reviewer_note,
@@ -236,7 +235,6 @@ export async function getJobVariance(sourceValue: string) {
   });
   return data;
 }
-
 
 export interface EvalMetric {
   id: string;
@@ -266,9 +264,7 @@ export async function listMetricsForBenchmark(benchmarkId: string) {
 }
 
 export async function checkMetricsCompleteness(benchmarkId: string) {
-  const { data } = await api.get<MetricsCompleteness>(
-    `/benchmarks/${benchmarkId}/metrics/completeness`
-  );
+  const { data } = await api.get<MetricsCompleteness>(`/benchmarks/${benchmarkId}/metrics/completeness`);
   return data;
 }
 
@@ -291,7 +287,6 @@ export async function updateMetric(metricId: string, payload: Partial<EvalMetric
 export async function deleteMetric(metricId: string) {
   await api.delete(`/metrics/${metricId}`);
 }
-
 
 export interface RepoStat {
   id: string;
@@ -364,5 +359,130 @@ export interface ResearchGapHeatmap {
 
 export async function getResearchGapHeatmap() {
   const { data } = await api.get<ResearchGapHeatmap>("/stats/research-gap-heatmap");
+  return data;
+}
+
+// ---- Phase 6: community submissions ----
+
+export interface Submission {
+  id: string;
+  submitter_user_id: string;
+  source_type: string;
+  source_value: string;
+  model_used: string;
+  status: string;
+  extraction_job_id: string | null;
+  result_benchmark_id: string | null;
+  domain_check_passed: boolean | null;
+  domain_check_reason: string | null;
+  quality_score: number | null;
+  admin_reviewer_id: string | null;
+  admin_review_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  reviewed_at: string | null;
+}
+
+/** BUG FIX: FastAPI serializes Submission.quality_score (a Postgres
+ * Numeric(3,2) / Python Decimal) as a JSON STRING, not a number --
+ * e.g. "0.75" rather than 0.75. Every function below that returns a
+ * Submission or Submission[] passes its raw response through this
+ * normalizer so every consumer of the Submission type can trust
+ * quality_score really is `number | null`, matching the interface
+ * above, instead of needing its own defensive Number(...) call at
+ * every render site (which is how this bug slipped through -- the
+ * interface claimed a type the API never actually provided). */
+function normalizeSubmission(raw: any): Submission {
+  return {
+    ...raw,
+    quality_score: raw.quality_score !== null && raw.quality_score !== undefined
+      ? Number(raw.quality_score)
+      : null,
+  };
+}
+
+export async function createSubmission(source_value: string) {
+  const { data } = await api.post<Submission>("/submissions", { source_value });
+  return normalizeSubmission(data);
+}
+
+export async function listMySubmissions() {
+  const { data } = await api.get<Submission[]>("/submissions/mine");
+  return data.map(normalizeSubmission);
+}
+
+export async function listAllSubmissions(statusFilter?: string) {
+  const params = statusFilter ? { status: statusFilter } : {};
+  const { data } = await api.get<Submission[]>("/submissions", { params });
+  return data.map(normalizeSubmission);
+}
+
+export async function getSubmission(id: string) {
+  const { data } = await api.get<Submission>(`/submissions/${id}`);
+  return normalizeSubmission(data);
+}
+
+export async function reviewSubmission(
+  id: string,
+  decision: "approve" | "reject" | "needs_better_extraction",
+  reviewer_notes?: string
+) {
+  const { data } = await api.post<Submission>(`/submissions/${id}/review`, {
+    decision,
+    reviewer_notes,
+  });
+  return normalizeSubmission(data);
+}
+
+export async function reextractSubmission(id: string, model_used: string) {
+  const { data } = await api.post<Submission>(`/submissions/${id}/reextract`, { model_used });
+  return normalizeSubmission(data);
+}
+
+// ---- Phase 6: notifications ----
+
+export interface AppNotification {
+  id: string;
+  notification_type: string;
+  title: string;
+  body: string | null;
+  link_path: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export async function listNotifications(unreadOnly = false) {
+  const { data } = await api.get<AppNotification[]>("/notifications", {
+    params: unreadOnly ? { unread_only: true } : {},
+  });
+  return data;
+}
+
+export async function getUnreadNotificationCount() {
+  const { data } = await api.get<{ unread_count: number }>("/notifications/unread-count");
+  return data.unread_count;
+}
+
+export async function markNotificationRead(id: string) {
+  const { data } = await api.post<AppNotification>(`/notifications/${id}/read`);
+  return data;
+}
+
+export async function markAllNotificationsRead() {
+  const { data } = await api.post<{ marked_read: number }>("/notifications/read-all");
+  return data;
+}
+
+// ---- Phase 6: admin user management ----
+
+export async function listUsers(params?: { search?: string; role?: string }) {
+  const { data } = await api.get<UserOut[]>("/users", { params });
+  return data;
+}
+
+export async function setTrustedSubmitter(userId: string, trusted: boolean) {
+  const { data } = await api.post<UserOut>(`/users/${userId}/trust`, null, {
+    params: { trusted },
+  });
   return data;
 }

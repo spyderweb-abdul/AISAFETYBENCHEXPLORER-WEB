@@ -1,11 +1,25 @@
 # Destination path: backend/app/models/orm.py
 # Replaces the existing file in full.
 #
-# CHANGE (Known Gap item 17 follow-up, this session): ExtractionJob
-# gains a nullable failure_reason Text column, populated by
-# agent_runner.py's except block on any job failure (paired with
-# alembic migration 0005_add_extraction_job_failure_reason.py). No
-# other model, column, or relationship is changed.
+# CHANGES (Phase 6 items 3/4, this session):
+# - User gains is_trusted_submitter (admin-togglable; see
+#   app/core/submission_runner.py for how this changes domain-check
+#   handling).
+# - Benchmark gains submission_source ("admin"/"community") and
+#   submitted_by_user_id -- distinct from the pre-existing
+#   created_by_user_id, which is stamped by the general admin CRUD /
+#   agent extraction paths and is not specific to the community
+#   submission workflow. submitted_by_user_id is the durable,
+#   never-null-for-community-rows provenance pointer requested for
+#   this feature.
+# - New Submission model: one row per community DOI submission,
+#   tracking domain-check outcome, linked ExtractionJob, resulting
+#   Benchmark, quality score, and admin review decision/notes.
+# - New Notification model: in-app notifications for admins (new
+#   submission queued) and submitters (approved/rejected/needs
+#   better extraction).
+# Paired with alembic migration 0006_add_community_submissions.py.
+# No existing column, table, or relationship removed or renamed.
 
 import uuid
 from datetime import datetime
@@ -36,6 +50,12 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(user_role_enum, nullable=False, default="researcher")
     github_id = Column(String(64))
+    # Phase 6: admin-togglable trust flag. A trusted submitter's failed
+    # domain check is queued for manual review (soft warning) instead
+    # of being auto-rejected outright (see submission_runner.py). Does
+    # NOT bypass the 3-consecutive-rejection submission block -- that
+    # check still applies to everyone including trusted submitters.
+    is_trusted_submitter = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -73,6 +93,17 @@ class Benchmark(Base):
     # user-settable directly via BenchmarkCreate/BenchmarkUpdate.
     use_cases = Column(ARRAY(Text), nullable=False, default=list)
     safety_dimensions = Column(ARRAY(Text), nullable=False, default=list)
+    # Phase 6: coarse provenance label, stamped once at creation and
+    # never changed afterward, distinct from created_by (Human/Machine/
+    # Hybrid, describing HOW the record was produced) and from
+    # created_by_user_id (the general admin-CRUD/agent-extraction actor,
+    # which may be an admin acting on someone else's behalf).
+    # submitted_by_user_id is the specific, always-populated-for-
+    # community-rows FK identifying exactly which researcher account
+    # requested this benchmark's extraction, for provenance and abuse
+    # tracing independent of whatever created_by_user_id holds.
+    submission_source = Column(String(20), nullable=False, default="admin")
+    submitted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -151,6 +182,61 @@ class ExtractionJob(Base):
     failure_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
+
+
+class Submission(Base):
+    """Phase 6 item 4: one row per community (researcher-submitted)
+    DOI/arXiv/PDF extraction request. Decoupled from ExtractionJob so a
+    single submission can span multiple extraction attempts (the
+    initial free-tier Ollama run, and an optional admin-requested
+    paid-model re-extraction) without losing the submission's own
+    identity, submitter, and review history.
+
+    status values: submitted -> extracting -> (domain_check_failed |
+    failed | pending_review) -> (approved | rejected |
+    needs_better_extraction). needs_better_extraction loops back to
+    extracting once the admin triggers a re-extraction with a paid
+    model (see POST /submissions/{id}/reextract)."""
+
+    __tablename__ = "submissions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submitter_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    source_type = Column(String(20), nullable=False)
+    source_value = Column(Text, nullable=False)
+    model_used = Column(String(100), nullable=False)
+    status = Column(String(30), nullable=False, default="submitted")
+    extraction_job_id = Column(UUID(as_uuid=True), ForeignKey("extraction_jobs.id", ondelete="SET NULL"))
+    result_benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id", ondelete="SET NULL"))
+    domain_check_passed = Column(Boolean, nullable=True)
+    domain_check_reason = Column(Text, nullable=True)
+    quality_score = Column(Numeric(3, 2), nullable=True)
+    admin_reviewer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    admin_review_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class Notification(Base):
+    """Phase 6 item 3: in-app notification. notification_type values:
+    submission_queued_for_review (to admins), submission_approved,
+    submission_declined, submission_needs_reextraction,
+    submission_failed_extraction (to the submitter). link_path is a
+    frontend route the notification should deep-link to (e.g.
+    /submit/{submission_id}) -- optional, may be null for generic
+    notices."""
+
+    __tablename__ = "notifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    notification_type = Column(String(50), nullable=False)
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=True)
+    link_path = Column(String(255), nullable=True)
+    is_read = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class AuditLog(Base):

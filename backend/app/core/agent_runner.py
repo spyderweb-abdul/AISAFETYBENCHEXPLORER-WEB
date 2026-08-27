@@ -488,7 +488,7 @@ def _clamp_varchar_fields(raw: dict) -> tuple[dict, list[str]]:
     return raw, truncated
 
 
-def _build_user_message(source_type: str, source_value: str, fetched: dict[str, Any]) -> str:
+def _build_user_message(source_type: str, source_value: str, fetched: dict[str, Any], has_search_tool: bool = True,) -> str:
     if not fetched.get("fetch_ok"):
         return (
             f"Extract benchmark metadata for {source_type}: {source_value}\n\n"
@@ -514,22 +514,90 @@ def _build_user_message(source_type: str, source_value: str, fetched: dict[str, 
         parts.append(f"Abstract: {fetched['abstract']}")
     if fetched.get("full_text_excerpt"):
         parts.append(f"Full text excerpt (first ~15 pages): {fetched['full_text_excerpt']}")
-    parts.append(
-        "--- END FETCHED METADATA ---\n"
-        "Base your extraction on the above fetched data. For fields not covered "
-        "by the abstract/excerpt (e.g. code repository, license, exact sample "
-        "counts, dataset repository), you MUST run the Phase 0.2 targeted "
-        "searches listed in the system prompt before deciding a field is "
-        "unknown -- do not skip straight to null/Unknown."
-    )
+    if has_search_tool:
+        parts.append(
+            "--- END FETCHED METADATA ---\n"
+            "Base your extraction on the above fetched data. For fields not covered "
+            "by the abstract/excerpt (e.g. code repository, license, exact sample "
+            "counts, dataset repository), you MUST run the Phase 0.2 targeted "
+            "searches listed in the system prompt before deciding a field is "
+            "unknown -- do not skip straight to null/Unknown."
+        )
+    else:
+        parts.append(
+            "--- END FETCHED METADATA ---\n"
+            "Base your extraction ENTIRELY on the fetched metadata above. You do "
+            "NOT have access to any web search or browsing tool in this call -- do "
+            "not attempt to invoke one, narrate searching, or describe search "
+            "queries you would run. For any field not directly supported by the "
+            "fetched title/abstract/excerpt above (e.g. code repository, license, "
+            "exact sample counts, dataset repository), set that field to null or "
+            "\"Unknown\" rather than guessing or attempting to search. Respond with "
+            "the JSON object only -- no commentary, no search narration, no "
+            "markdown code fences."
+        )
     return "\n".join(parts)
 
+def _parse_model_json_response(raw_text: str, log_label: str) -> dict[str, Any]:
+    """Robustly parses a model's JSON response, tolerating the common
+    failure modes seen across providers: markdown code fences (```json
+    ... ```), leading/trailing prose, or an empty/whitespace body.
+
+    Tries, in order:
+    1. Direct json.loads() on the raw text (the happy path).
+    2. Stripping a leading/trailing ```json or ``` fence, then
+       json.loads() again.
+    3. _extract_last_balanced_json() -- the same brace-matching
+       fallback already used for Anthropic responses -- as a last
+       resort for cases where the model wrapped valid JSON in
+       explanatory prose without fences.
+
+    Raises ValueError with a truncated preview of the raw text if all
+    three attempts fail, so a failure is diagnosable from the
+    persisted failure_reason (see ExtractionJob.failure_reason) instead
+    of showing only Python's generic, uninformative
+    "Expecting value: line 1 column 1 (char 0)" message.
+    """
+    text = (raw_text or "").strip()
+    if not text:
+        raise ValueError(
+            f"{log_label}: model returned an empty response body. This is a "
+            "known limitation with some models/providers (e.g. Ollama Cloud "
+            "does not support structured outputs, and gpt-oss models have a "
+            "documented incompatibility with the OpenAI SDK's "
+            "response_format=json_object parameter due to their Harmony "
+            "response format) rather than a prompt or extraction-logic bug."
+        )
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    fence_stripped = re.sub(r"^```(?:json)?\s*", "", text)
+    fence_stripped = re.sub(r"\s*```$", "", fence_stripped).strip()
+    if fence_stripped != text:
+        try:
+            return json.loads(fence_stripped)
+        except json.JSONDecodeError:
+            pass
+
+    balanced = _extract_last_balanced_json(text)
+    if balanced is not None:
+        return balanced
+
+    preview = text[:300].replace("\n", " ")
+    raise ValueError(
+        f"{log_label}: could not parse a valid JSON object from the model's "
+        f"response after trying direct parse, markdown-fence stripping, and "
+        f"balanced-brace extraction. Response preview: {preview!r}"
+    )
 
 def _call_openai(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
     import openai
 
     client = openai.OpenAI(api_key=api_key)
-    user_msg = _build_user_message(source_type, source_value, fetched)
+    user_msg = _build_user_message(source_type, source_value, fetched, has_search_tool=False)
     response = client.chat.completions.create(
         model=model_name,
         messages=[
@@ -544,18 +612,27 @@ def _call_openai(model_name: str, source_type: str, source_value: str, api_key: 
         "input_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
         "output_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
     }
-    return json.loads(response.choices[0].message.content or "{}"), usage
+    return _parse_model_json_response(response.choices[0].message.content, "openai"), usage
 
 def _call_ollama(
     model_name: str, source_type: str, source_value: str,
     base_url: str, api_key: str, fetched: dict[str, Any],
+    _max_tokens: int = 8192, _retry_on_empty: bool = True,
 ) -> tuple[dict[str, Any], dict[str, int]]:
-    """Calls an open-weight model (DeepSeek, Qwen, Kimi, etc.) hosted on
-    Ollama Cloud via its OpenAI-compatible /v1/chat/completions endpoint
-    (https://ollama.com/v1 by default, see app/core/config.py's
-    OLLAMA_BASE_URL_CLOUD). Reuses the same openai SDK as _call_openai
-    -- Ollama's cloud and local APIs both speak this protocol, so no
-    separate client library is needed.
+    """Calls an open-weight model (DeepSeek, Qwen, Kimi, gpt-oss, etc.)
+    hosted on Ollama Cloud via its OpenAI-compatible
+    /v1/chat/completions endpoint (https://ollama.com/v1 by default,
+    see app/core/config.py's OLLAMA_BASE_URL_CLOUD). Reuses the same
+    openai SDK as _call_openai -- Ollama's cloud and local APIs both
+    speak this protocol, so no separate client library is needed.
+
+    max_tokens is set explicitly and generously (8192, doubling once on
+    retry) because gpt-oss models spend part of their token budget on
+    internal chain-of-thought reasoning (their "Harmony" response
+    format) before emitting a final answer -- if the budget runs out
+    during that reasoning phase, the model returns an EMPTY response
+    rather than a partial one. Mirrors
+    _call_anthropic()'s existing retry-on-truncation pattern.
     """
     import openai
 
@@ -572,29 +649,47 @@ def _call_ollama(
         )
 
     client = openai.OpenAI(base_url=base_url, api_key=api_key)
-    user_msg = _build_user_message(source_type, source_value, fetched)
+    user_msg = _build_user_message(source_type, source_value, fetched, has_search_tool=False)
     response = client.chat.completions.create(
         model=model_name,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT_STUB},
             {"role": "user", "content": user_msg},
         ],
-        response_format={"type": "json_object"},
+        max_tokens=_max_tokens,
         temperature=0.0,
     )
+
+    content = response.choices[0].message.content
+    finish_reason = getattr(response.choices[0], "finish_reason", None)
+
+    if not (content or "").strip() and _retry_on_empty and _max_tokens < 32000:
+        logger.warning(
+            "Ollama call for %s:%s returned an empty response with "
+            "max_tokens=%d (finish_reason=%s) -- likely exhausted its "
+            "token budget on internal reasoning before emitting a final "
+            "answer (a documented gpt-oss behavior). Retrying once with "
+            "max_tokens=%d.",
+            source_type, source_value, _max_tokens, finish_reason,
+            min(_max_tokens * 2, 32000),
+        )
+        return _call_ollama(
+            model_name, source_type, source_value, base_url, api_key, fetched,
+            _max_tokens=min(_max_tokens * 2, 32000), _retry_on_empty=False,
+        )
+
     usage = {
         "input_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
         "output_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
     }
-    return json.loads(response.choices[0].message.content or "{}"), usage
+    return _parse_model_json_response(content, "ollama"), usage
 
 
 def _call_anthropic(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> dict[str, Any]:
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
-    user_msg = _build_user_message(source_type, source_value, fetched)
-
+    user_msg = _build_user_message(source_type, source_value, fetched, has_search_tool=True)
 
     message = client.messages.create(
         model=model_name,
