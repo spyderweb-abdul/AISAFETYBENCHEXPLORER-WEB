@@ -1,24 +1,3 @@
-"""Sheet 2 (Evaluation Metrics Catalogue) CRUD router.
-
-Phase 2b: exposes eval_metrics rows -- already written correctly during
-agent extraction by agent_runner.py's persist_eval_metrics(), and by the
-Excel-to-DB migration script for pre-existing benchmarks -- through a
-proper CRUD API so the admin frontend can list/create/update/delete them
-and flag Sheet 1 <-> Sheet 2 completeness gaps.
-
-Route shape:
-  GET    /benchmarks/{benchmark_id}/metrics               list metrics for a benchmark
-  GET    /benchmarks/{benchmark_id}/metrics/completeness   Sheet 1<->2 consistency flag
-  POST   /benchmarks/{benchmark_id}/metrics                create a metric row
-  GET    /metrics/{metric_id}                              get a single metric row
-  PATCH  /metrics/{metric_id}                               update a metric row
-  DELETE /metrics/{metric_id}                               delete a metric row
-
-Mirrors the audit-log pattern already used by app/routers/benchmarks.py:
-every create/update/delete writes an audit_log row via log_action(), and
-admin-role is required for all write operations (list/get remain public,
-matching the existing benchmarks router's read access model).
-"""
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException

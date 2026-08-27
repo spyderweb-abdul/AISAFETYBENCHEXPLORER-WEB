@@ -1,27 +1,3 @@
-"""
-app/core/github_rate_limit.py
-
-Roadmap item 14: lightweight, standalone GitHub API rate-limit check.
-Kept separate from github_scrapper.py rather than modifying it, since
-that file's full internals were never verified in this session (same
-caution already applied to agent_runner.py elsewhere in this project --
-partial visibility means no blind full-file edits).
-
-FIX (2026-08-16): the first version of this module imported `requests`,
-which is not a dependency of this project at all (confirmed against
-backend/requirements.txt) and broke celery_worker/celery_beat at import
-time with ModuleNotFoundError. This codebase already uses httpx for
-HTTP calls elsewhere (paired with tenacity for retries, per Phase 4's
-rate-limit-aware scraping in github_scrapper.py/hf_scrapper.py) --
-rewritten to use httpx instead, which is already installed, so no
-requirements.txt change or image rebuild is needed.
-
-Uses GitHub's dedicated /rate_limit endpoint. Checking it does not
-itself count against the primary rate limit, so it is safe to call
-before every bulk operation without contributing to the exhaustion it
-is trying to prevent.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timezone

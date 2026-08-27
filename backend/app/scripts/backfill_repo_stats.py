@@ -1,20 +1,4 @@
-"""Backfill script: populate RepoStat rows for benchmarks extracted before
-Phase 4 shipped (i.e. before github_scrapper.py / hf_scrapper.py were wired
-into agent_runner.py).
-
-Context: as of 2026-07-26, only benchmarks extracted AFTER the Phase 4 patch
-went live get their code_repository / dataset_repository verified against
-the real GitHub / HuggingFace APIs and persisted as RepoStat rows. Every
-benchmark extracted before that point (see ExtractionJob.completed_at <
-2026-07-26) has a code_repository / dataset_repository string on the
-Benchmark row itself, but no matching RepoStat row.
-
-This script finds those benchmarks and runs them through the same scraper
-functions agent_runner.py now uses live, then persists RepoStat rows the
-same way. It is idempotent: it skips any benchmark that already has a
-RepoStat row for a given source, so it is safe to re-run (e.g. as a cron
-job or manually after fixing a scraper bug) without creating duplicates.
-
+"""
 Usage:
     docker compose exec backend python -m app.scripts.backfill_repo_stats
     docker compose exec backend python -m app.scripts.backfill_repo_stats --dry-run

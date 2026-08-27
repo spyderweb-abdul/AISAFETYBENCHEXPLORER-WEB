@@ -1,24 +1,3 @@
-# Destination path: backend/app/routers/benchmarks.py
-# Replaces the existing file in full.
-#
-# CHANGES (Phase 5 gap closure, this session):
-# 1. list_benchmarks() gains three new real, server-side query params:
-#    license (case-insensitive partial match), language_support (exact
-#    match against the ARRAY(Text) column, same .any() pattern already
-#    used for task_type/use_cases), release_date_from and
-#    release_date_to (inclusive date range against the Date column).
-#    This closes the roadmap's "License and Language Support remain
-#    client-side only" and "Release Date filtering is not yet
-#    implemented at all" gaps (Section 5, Phase 5).
-# 2. list_benchmarks() and get_benchmark() are the two public,
-#    unauthenticated read endpoints named in Known Gap item 22; both
-#    now carry an explicit slowapi rate limit on top of the blanket
-#    default_limits configured in app/core/rate_limit.py and wired in
-#    main.py. Every slowapi-decorated route must accept a `request:
-#    Request` parameter, which is added here for both.
-# No other behavior (create/update/review/delete, admin auth, audit
-# logging) is changed.
-
 from datetime import date
 from typing import Optional
 from uuid import UUID
