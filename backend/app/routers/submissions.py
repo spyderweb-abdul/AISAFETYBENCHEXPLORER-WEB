@@ -1,16 +1,20 @@
 # Destination path: backend/app/routers/submissions.py
-# Replaces the existing file in full. (Supersedes the earlier drafts
-# from the previous session -- the only functional change is
-# create_submission()'s dependency, swapped from get_current_user to
-# require_researcher. See app/core/deps.py's require_researcher()
-# docstring for the full rationale: an admin submitting through this
-# endpoint was a real bug, not just a UI quirk -- it caused the same
-# account to receive both admin-facing and submitter-facing
-# notifications, and would let an admin review their own submission.
-# get_submission()/list_my_submissions() still use get_current_user
-# since admins legitimately need to look up any submission by id, and
-# a researcher needs to see their own history -- only the WRITE path
-# that creates a new community submission is now researcher-only.)
+# Replaces the existing file in full.
+#
+# CHANGE (2026-08-28): admin re-extraction now UPDATES the benchmark
+# already linked to a submission instead of creating a new benchmark
+# row and marking the old one "rejected". This closes the gap where
+# re-processing the same paper through the admin extraction pipeline
+# produced a second, duplicate catalogue entry instead of refreshing
+# the one already under review.
+#
+# _run_reextraction_background() now passes reuse_benchmark_id=
+# superseded_benchmark_id into run_extraction() (see agent_runner.py's
+# matching patch), so the same Benchmark.id is updated in place. The
+# "supersede and reject the old benchmark" branch has been removed;
+# there is no longer an "old" benchmark distinct from the "new" one --
+# there is exactly one benchmark row for this submission, updated
+# in place, with full audit-log history captured by the update path.
 
 from __future__ import annotations
 
@@ -240,20 +244,11 @@ def _run_reextraction_background(submission_id: uuid.UUID, job_id: uuid.UUID, su
         openai_api_key=settings.OPENAI_API_KEY,
         anthropic_api_key=settings.ANTHROPIC_API_KEY,
         semantic_scholar_api_key=settings.SEMANTIC_SCHOLAR_API_KEY,
+        reuse_benchmark_id=superseded_benchmark_id,
     )
 
     db.refresh(job)
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
-
-    if superseded_benchmark_id:
-        old_benchmark = db.query(Benchmark).filter(Benchmark.id == superseded_benchmark_id).first()
-        if old_benchmark and old_benchmark.status != "rejected":
-            old_benchmark.status = "rejected"
-            log_action(
-                db, table_name="benchmarks", record_id=old_benchmark.id, action="update",
-                changed_by=None,
-                diff={"reason": f"Superseded by re-extraction for submission {submission_id}"},
-            )
 
     if job.status == "failed" or job.result_benchmark_id is None:
         submission.status = "failed"
@@ -267,18 +262,18 @@ def _run_reextraction_background(submission_id: uuid.UUID, job_id: uuid.UUID, su
         db.commit()
         return
 
-    new_benchmark = db.query(Benchmark).filter(Benchmark.id == job.result_benchmark_id).first()
-    new_benchmark.submission_source = "community"
-    new_benchmark.submitted_by_user_id = submission.submitter_user_id
+    benchmark = db.query(Benchmark).filter(Benchmark.id == job.result_benchmark_id).first()
+    benchmark.submission_source = "community"
+    benchmark.submitted_by_user_id = submission.submitter_user_id
 
-    submission.result_benchmark_id = new_benchmark.id
+    submission.result_benchmark_id = benchmark.id
     submission.quality_score = job.quality_score
     submission.status = "pending_review"
     db.commit()
 
     notify_admins(
         db, "submission_queued_for_review",
-        title=f"Re-extraction ready for review: {new_benchmark.benchmark_name}",
+        title=f"Re-extraction ready for review: {benchmark.benchmark_name}",
         body=f"Re-extracted with {job.model_used} at the reviewing admin's request. Quality score: {job.quality_score}.",
         link_path=f"/admin/submissions/{submission.id}",
     )
@@ -329,3 +324,4 @@ def reextract_submission(
     )
     db.refresh(submission)
     return submission
+

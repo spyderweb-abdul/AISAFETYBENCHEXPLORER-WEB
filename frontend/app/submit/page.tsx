@@ -49,10 +49,7 @@ export default function SubmitPage() {
     fetchMe()
       .then((u) => {
         if (u.role === "admin") {
-          // FIX: admins are structurally excluded from the community
-          // submission workflow (see require_researcher in
-          // app/core/deps.py) -- redirect proactively instead of
-          // letting them fill out a form that will 403 on submit.
+
           router.replace("/admin/benchmarks");
           return;
         }

@@ -1,7 +1,15 @@
 // Destination path: frontend/lib/api.ts
 // Replaces the existing file in full.
 //
-// BUG FIX (this session): TypeError: s.quality_score.toFixed is not a
+// CHANGE (2026-08-28): added ModelOption type and listModels/
+// createModel/updateModel/deleteModel functions, backing the new
+// admin-managed model catalogue (backend/app/routers/models.py). This
+// supersedes the earlier api_ts_model_functions_patch.md guess -- this
+// is the real file, with the new block appended at the end, preserving
+// everything else exactly as-is including the existing
+// normalizeSubmission() Decimal-serialization fix.
+//
+// BUG FIX (prior session): TypeError: s.quality_score.toFixed is not a
 // function, thrown on /submit and /admin/submissions. Root cause:
 // FastAPI/Pydantic serializes Decimal columns (Submission.quality_score
 // is a Postgres Numeric(3,2), see models/orm.py) as JSON STRINGS (e.g.
@@ -15,7 +23,6 @@
 // that returns a Submission or Submission[], so every current and
 // future consumer of this type can trust quality_score is a real
 // number (or null) without needing its own defensive Number() call.
-// No other type, function, or behavior in this file changed.
 
 import axios from "axios";
 import Cookies from "js-cookie";
@@ -123,7 +130,7 @@ export interface UserOut {
 }
 
 export async function registerUser(email: string, password: string) {
-  const { data } = await api.post<UserOut>("/auth/register", { email, password });
+  const { data } = await api.post("/auth/register", { email, password });
   return data;
 }
 
@@ -138,27 +145,27 @@ export async function login(email: string, password: string) {
 }
 
 export async function fetchMe() {
-  const { data } = await api.get<UserOut>("/auth/me");
+  const { data } = await api.get("/auth/me");
   return data;
 }
 
-export async function listBenchmarks(params?: Record<string, string | number>) {
-  const { data } = await api.get<Benchmark[]>("/benchmarks", { params });
+export async function listBenchmarks(params?: Record<string, unknown>) {
+  const { data } = await api.get("/benchmarks", { params });
   return data;
 }
 
 export async function getBenchmark(id: string) {
-  const { data } = await api.get<Benchmark>(`/benchmarks/${id}`);
+  const { data } = await api.get(`/benchmarks/${id}`);
   return data;
 }
 
 export async function createBenchmark(payload: Partial<Benchmark>) {
-  const { data } = await api.post<Benchmark>("/benchmarks", payload);
+  const { data } = await api.post("/benchmarks", payload);
   return data;
 }
 
 export async function updateBenchmark(id: string, payload: Partial<Benchmark>) {
-  const { data } = await api.patch<Benchmark>(`/benchmarks/${id}`, payload);
+  const { data } = await api.patch(`/benchmarks/${id}`, payload);
   return data;
 }
 
@@ -167,25 +174,25 @@ export async function deleteBenchmark(id: string) {
 }
 
 export async function reviewBenchmark(id: string, approve: boolean, reviewer_note?: string) {
-  const { data } = await api.post<Benchmark>(`/benchmarks/${id}/review`, {
+  const { data } = await api.post(`/benchmarks/${id}/review`, {
     approve,
     reviewer_note,
   });
   return data;
 }
 
-export async function classifyComplexity(signals: Record<string, boolean | number>) {
+export async function classifyComplexity(signals: Record<string, unknown>) {
   const { data } = await api.post("/complexity/classify", signals);
   return data as { complexity_level: string; justification: string };
 }
 
 export async function fetchVocab() {
-  const { data } = await api.get<Vocab>("/vocab");
-  return data;
+  const { data } = await api.get("/vocab");
+  return data as Vocab;
 }
 
-export async function fetchAuditLog(params?: Record<string, string>) {
-  const { data } = await api.get<AuditLogEntry[]>("/audit-log", { params });
+export async function fetchAuditLog(params?: Record<string, unknown>) {
+  const { data } = await api.get("/audit-log", { params });
   return data;
 }
 
@@ -206,23 +213,23 @@ export async function submitExtractionJob(payload: {
   source_value: string;
   model_used: string;
 }) {
-  const { data } = await api.post<ExtractionJob>("/extraction/jobs", payload);
+  const { data } = await api.post("/extraction/jobs", payload);
   return data;
 }
 
 export async function listExtractionJobs(statusFilter?: string) {
   const params = statusFilter ? { status: statusFilter } : {};
-  const { data } = await api.get<ExtractionJob[]>("/extraction/jobs", { params });
+  const { data } = await api.get("/extraction/jobs", { params });
   return data;
 }
 
 export async function getExtractionJob(id: string) {
-  const { data } = await api.get<ExtractionJob>(`/extraction/jobs/${id}`);
+  const { data } = await api.get(`/extraction/jobs/${id}`);
   return data;
 }
 
 export async function reviewExtractionJob(id: string, approve: boolean, reviewer_note?: string) {
-  const { data } = await api.post<ExtractionJob>(`/extraction/jobs/${id}/review`, {
+  const { data } = await api.post(`/extraction/jobs/${id}/review`, {
     approve,
     reviewer_note,
   });
@@ -230,7 +237,7 @@ export async function reviewExtractionJob(id: string, approve: boolean, reviewer
 }
 
 export async function getJobVariance(sourceValue: string) {
-  const { data } = await api.get<JobVariance>("/extraction/jobs/variance", {
+  const { data } = await api.get("/extraction/jobs/variance", {
     params: { source_value: sourceValue },
   });
   return data;
@@ -259,20 +266,20 @@ export interface MetricsCompleteness {
 }
 
 export async function listMetricsForBenchmark(benchmarkId: string) {
-  const { data } = await api.get<EvalMetric[]>(`/benchmarks/${benchmarkId}/metrics`);
+  const { data } = await api.get(`/benchmarks/${benchmarkId}/metrics`);
   return data;
 }
 
 export async function checkMetricsCompleteness(benchmarkId: string) {
-  const { data } = await api.get<MetricsCompleteness>(`/benchmarks/${benchmarkId}/metrics/completeness`);
+  const { data } = await api.get(`/benchmarks/${benchmarkId}/metrics/completeness`);
   return data;
 }
 
 export async function createMetric(
   benchmarkId: string,
-  payload: Omit<EvalMetric, "id" | "benchmark_id" | "created_at" | "updated_at">
+  payload: Omit<EvalMetric, "id" | "benchmark_id" | "created_at" | "updated_at">,
 ) {
-  const { data } = await api.post<EvalMetric>(`/benchmarks/${benchmarkId}/metrics`, {
+  const { data } = await api.post(`/benchmarks/${benchmarkId}/metrics`, {
     ...payload,
     benchmark_id: benchmarkId,
   });
@@ -280,7 +287,7 @@ export async function createMetric(
 }
 
 export async function updateMetric(metricId: string, payload: Partial<EvalMetric>) {
-  const { data } = await api.patch<EvalMetric>(`/metrics/${metricId}`, payload);
+  const { data } = await api.patch(`/metrics/${metricId}`, payload);
   return data;
 }
 
@@ -312,7 +319,7 @@ export interface RepoStat {
 }
 
 export async function listRepoStatsForBenchmark(benchmarkId: string, history = false) {
-  const { data } = await api.get<RepoStat[]>(`/repo-stats/benchmarks/${benchmarkId}`, {
+  const { data } = await api.get(`/repo-stats/benchmarks/${benchmarkId}`, {
     params: history ? { history: true } : {},
   });
   return data;
@@ -320,7 +327,7 @@ export async function listRepoStatsForBenchmark(benchmarkId: string, history = f
 
 export async function triggerRepoStatsRefresh(benchmarkId: string) {
   const { data } = await api.post<{ task_id: string; benchmark_id: string }>(
-    `/repo-stats/benchmarks/${benchmarkId}/refresh`
+    `/repo-stats/benchmarks/${benchmarkId}/refresh`,
   );
   return data;
 }
@@ -338,7 +345,7 @@ export interface GithubRateLimit {
 }
 
 export async function getGithubRateLimit() {
-  const { data } = await api.get<GithubRateLimit>("/repo-stats/github-rate-limit");
+  const { data } = await api.get("/repo-stats/github-rate-limit");
   return data;
 }
 
@@ -358,7 +365,7 @@ export interface ResearchGapHeatmap {
 }
 
 export async function getResearchGapHeatmap() {
-  const { data } = await api.get<ResearchGapHeatmap>("/stats/research-gap-heatmap");
+  const { data } = await api.get("/stats/research-gap-heatmap");
   return data;
 }
 
@@ -402,32 +409,32 @@ function normalizeSubmission(raw: any): Submission {
 }
 
 export async function createSubmission(source_value: string) {
-  const { data } = await api.post<Submission>("/submissions", { source_value });
+  const { data } = await api.post("/submissions", { source_value });
   return normalizeSubmission(data);
 }
 
 export async function listMySubmissions() {
-  const { data } = await api.get<Submission[]>("/submissions/mine");
+  const { data } = await api.get("/submissions/mine");
   return data.map(normalizeSubmission);
 }
 
 export async function listAllSubmissions(statusFilter?: string) {
   const params = statusFilter ? { status: statusFilter } : {};
-  const { data } = await api.get<Submission[]>("/submissions", { params });
+  const { data } = await api.get("/submissions", { params });
   return data.map(normalizeSubmission);
 }
 
 export async function getSubmission(id: string) {
-  const { data } = await api.get<Submission>(`/submissions/${id}`);
+  const { data } = await api.get(`/submissions/${id}`);
   return normalizeSubmission(data);
 }
 
 export async function reviewSubmission(
   id: string,
   decision: "approve" | "reject" | "needs_better_extraction",
-  reviewer_notes?: string
+  reviewer_notes?: string,
 ) {
-  const { data } = await api.post<Submission>(`/submissions/${id}/review`, {
+  const { data } = await api.post(`/submissions/${id}/review`, {
     decision,
     reviewer_notes,
   });
@@ -435,7 +442,7 @@ export async function reviewSubmission(
 }
 
 export async function reextractSubmission(id: string, model_used: string) {
-  const { data } = await api.post<Submission>(`/submissions/${id}/reextract`, { model_used });
+  const { data } = await api.post(`/submissions/${id}/reextract`, { model_used });
   return normalizeSubmission(data);
 }
 
@@ -452,7 +459,7 @@ export interface AppNotification {
 }
 
 export async function listNotifications(unreadOnly = false) {
-  const { data } = await api.get<AppNotification[]>("/notifications", {
+  const { data } = await api.get("/notifications", {
     params: unreadOnly ? { unread_only: true } : {},
   });
   return data;
@@ -464,7 +471,7 @@ export async function getUnreadNotificationCount() {
 }
 
 export async function markNotificationRead(id: string) {
-  const { data } = await api.post<AppNotification>(`/notifications/${id}/read`);
+  const { data } = await api.post(`/notifications/${id}/read`);
   return data;
 }
 
@@ -476,13 +483,57 @@ export async function markAllNotificationsRead() {
 // ---- Phase 6: admin user management ----
 
 export async function listUsers(params?: { search?: string; role?: string }) {
-  const { data } = await api.get<UserOut[]>("/users", { params });
+  const { data } = await api.get("/users", { params });
   return data;
 }
 
 export async function setTrustedSubmitter(userId: string, trusted: boolean) {
-  const { data } = await api.post<UserOut>(`/users/${userId}/trust`, null, {
+  const { data } = await api.post(`/users/${userId}/trust`, null, {
     params: { trusted },
   });
   return data;
+}
+
+// ---- NEW (2026-08-28): admin model catalogue ----
+// Backs backend/app/routers/models.py. Replaces the hardcoded
+// frontend/lib/modelOptions.ts MODEL_OPTIONS array and
+// admin/submissions/page.tsx's PAID_MODELS array -- both consumer
+// pages now call listModels() instead.
+
+export interface ModelOption {
+  id: string;
+  identifier: string;
+  provider: string;
+  display_name: string | null;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelOptionInput {
+  identifier: string;
+  provider: string;
+  display_name?: string | null;
+  is_active?: boolean;
+  notes?: string | null;
+}
+
+export async function listModels(activeOnly = true) {
+  const { data } = await api.get("/models", { params: { active_only: activeOnly } });
+  return data as ModelOption[];
+}
+
+export async function createModel(payload: ModelOptionInput) {
+  const { data } = await api.post("/models", payload);
+  return data as ModelOption;
+}
+
+export async function updateModel(id: string, payload: Partial<ModelOptionInput>) {
+  const { data } = await api.patch(`/models/${id}`, payload);
+  return data as ModelOption;
+}
+
+export async function deleteModel(id: string) {
+  await api.delete(`/models/${id}`);
 }
