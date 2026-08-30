@@ -1,25 +1,20 @@
 # Destination path: backend/app/models/orm.py
 # Replaces the existing file in full.
 #
-# CHANGES (Phase 6 items 3/4, this session):
-# - User gains is_trusted_submitter (admin-togglable; see
-#   app/core/submission_runner.py for how this changes domain-check
-#   handling).
-# - Benchmark gains submission_source ("admin"/"community") and
-#   submitted_by_user_id -- distinct from the pre-existing
-#   created_by_user_id, which is stamped by the general admin CRUD /
-#   agent extraction paths and is not specific to the community
-#   submission workflow. submitted_by_user_id is the durable,
-#   never-null-for-community-rows provenance pointer requested for
-#   this feature.
-# - New Submission model: one row per community DOI submission,
-#   tracking domain-check outcome, linked ExtractionJob, resulting
-#   Benchmark, quality score, and admin review decision/notes.
-# - New Notification model: in-app notifications for admins (new
-#   submission queued) and submitters (approved/rejected/needs
-#   better extraction).
-# Paired with alembic migration 0006_add_community_submissions.py.
-# No existing column, table, or relationship removed or renamed.
+# CHANGE (2026-08-28): new ModelOption table. Replaces the hardcoded
+# MODEL_OPTIONS (frontend/lib/modelOptions.ts) / PAID_MODELS
+# (frontend/app/admin/submissions/page.tsx) frontend arrays with an
+# admin-manageable catalogue, CRUD'd via backend/app/routers/models.py
+# and surfaced at frontend/app/admin/models/page.tsx. Both the Agent
+# Extraction Panel and the submissions re-extract dropdown now fetch
+# GET /models instead of importing a static list.
+#
+# ExtractionJob.model_used and Submission.model_used remain plain
+# String columns, NOT foreign keys to model_options.id -- this is
+# deliberate. A job/submission always records the exact identifier
+# string that was actually used at run time, so deleting or
+# deactivating a ModelOption later never breaks historical job/
+# submission records or requires a cascading FK constraint.
 
 import uuid
 from datetime import datetime
@@ -50,11 +45,6 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(user_role_enum, nullable=False, default="researcher")
     github_id = Column(String(64))
-    # Phase 6: admin-togglable trust flag. A trusted submitter's failed
-    # domain check is queued for manual review (soft warning) instead
-    # of being auto-rejected outright (see submission_runner.py). Does
-    # NOT bypass the 3-consecutive-rejection submission block -- that
-    # check still applies to everyone including trusted submitters.
     is_trusted_submitter = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -86,22 +76,8 @@ class Benchmark(Base):
     dataset_repository = Column(Text)
     paper_link = Column(Text)
     status = Column(String(30), nullable=False, default="published")
-    # Phase 5: deterministic classifications, computed by
-    # app/core/use_case_classifier.py and
-    # app/core/safety_dimension_classifier.py at extraction time and on
-    # every manual create/update (see app/routers/benchmarks.py) -- not
-    # user-settable directly via BenchmarkCreate/BenchmarkUpdate.
     use_cases = Column(ARRAY(Text), nullable=False, default=list)
     safety_dimensions = Column(ARRAY(Text), nullable=False, default=list)
-    # Phase 6: coarse provenance label, stamped once at creation and
-    # never changed afterward, distinct from created_by (Human/Machine/
-    # Hybrid, describing HOW the record was produced) and from
-    # created_by_user_id (the general admin-CRUD/agent-extraction actor,
-    # which may be an admin acting on someone else's behalf).
-    # submitted_by_user_id is the specific, always-populated-for-
-    # community-rows FK identifying exactly which researcher account
-    # requested this benchmark's extraction, for provenance and abuse
-    # tracing independent of whatever created_by_user_id holds.
     submission_source = Column(String(20), nullable=False, default="admin")
     submitted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
@@ -174,30 +150,12 @@ class ExtractionJob(Base):
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
     estimated_cost_usd = Column(Numeric(10, 4), nullable=True)
-    # Known Gap item 17 follow-up: human-readable reason for a
-    # status="failed" job (e.g. Ollama Cloud's 403 subscription-tier
-    # rejection, or any other exception message), truncated to 2000
-    # chars by agent_runner.py before being written here. Null for
-    # jobs that never failed.
     failure_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
 
 
 class Submission(Base):
-    """Phase 6 item 4: one row per community (researcher-submitted)
-    DOI/arXiv/PDF extraction request. Decoupled from ExtractionJob so a
-    single submission can span multiple extraction attempts (the
-    initial free-tier Ollama run, and an optional admin-requested
-    paid-model re-extraction) without losing the submission's own
-    identity, submitter, and review history.
-
-    status values: submitted -> extracting -> (domain_check_failed |
-    failed | pending_review) -> (approved | rejected |
-    needs_better_extraction). needs_better_extraction loops back to
-    extracting once the admin triggers a re-extraction with a paid
-    model (see POST /submissions/{id}/reextract)."""
-
     __tablename__ = "submissions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -219,14 +177,6 @@ class Submission(Base):
 
 
 class Notification(Base):
-    """Phase 6 item 3: in-app notification. notification_type values:
-    submission_queued_for_review (to admins), submission_approved,
-    submission_declined, submission_needs_reextraction,
-    submission_failed_extraction (to the submitter). link_path is a
-    frontend route the notification should deep-link to (e.g.
-    /submit/{submission_id}) -- optional, may be null for generic
-    notices."""
-
     __tablename__ = "notifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -237,6 +187,39 @@ class Notification(Base):
     link_path = Column(String(255), nullable=True)
     is_read = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ModelOption(Base):
+    """NEW (2026-08-28): admin-manageable catalogue of models offered
+    in the Agent Extraction Panel's "Model" dropdown and the community
+    submissions "re-extract" dropdown. Replaces the previously
+    hardcoded frontend arrays (lib/modelOptions.ts's MODEL_OPTIONS,
+    admin/submissions/page.tsx's PAID_MODELS).
+
+    identifier is the exact "provider/model" string passed as
+    model_used to POST /extraction/jobs, POST /submissions/{id}/reextract,
+    and ultimately to agent_runner.run_extraction() -- which splits it
+    on "/" to dispatch to _call_openai / _call_anthropic / _call_ollama.
+    provider is stored redundantly (rather than derived on every read)
+    so the admin UI can group/filter by provider without re-parsing
+    identifier everywhere.
+
+    is_active controls whether a model appears in the dropdowns without
+    deleting its row (and without touching any ExtractionJob/Submission
+    that already recorded this identifier as model_used -- those are
+    plain string columns, not foreign keys to this table)."""
+
+    __tablename__ = "model_options"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    identifier = Column(String(100), unique=True, nullable=False)
+    provider = Column(String(20), nullable=False)
+    display_name = Column(String(150), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    notes = Column(Text, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class AuditLog(Base):

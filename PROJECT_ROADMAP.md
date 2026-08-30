@@ -1,6 +1,6 @@
 # AISafetyBenchExplorer Web Scaling - Project Roadmap
 
-Status document. Last updated: 2026-08-27.
+Status document. Last updated: 2026-08-28.
 
 This file is the canonical memory reference for this Space. Consult it first
 in every future session before proposing new work. Update it whenever scope,
@@ -295,6 +295,11 @@ build succeeded).
   Needs to be confirmed against the actual review/reject router code
   (not reviewed in this session) and documented here once confirmed.
   Still open as of 2026-07-26 -- see Section 9 item 11.
+- Admin re-extraction uses benchmark update, not create: extend agent_runner.run_extraction() 
+  and the /submissions/{id}/reextract-admin endpoint so that when a job is already linked to a benchmark id, 
+  re-running extraction applies a BenchmarkUpdate to that same row (with full audit-log history) instead of 
+  creating a duplicate benchmark record. This must preserve the Excel template compatibility and the existing 
+  version history semantics.
 
 ### Phase 4 -- GitHub and HuggingFace Scraper Service (Weeks 14-17) [SHIPPED, verified end-to-end 2026-07-26]
 - Wrap github_scrapper.py and hf_scrapper.py as scheduled Celery Beat tasks
@@ -1327,7 +1332,7 @@ needs them, rather than blocking the whole feature on this gap.
   Docker avoids this entirely and is the path that was actually
   verified working this session.
 
-## 9. Known Gaps (as of 2026-08-27)
+## 9. Known Gaps (as of 2026-08-28)
 
   PICK UP HERE NEXT SESSION: Phase 6 items 1-4 are all now shipped and
   live-tested as of 2026-08-27 (weekly citation refresh, version
@@ -1349,6 +1354,11 @@ needs them, rather than blocking the whole feature on this gap.
   notified outside the in-app bell; (c) admin UI for managing
   is_trusted_submitter (currently API-only via POST
   /users/{id}/trust?trusted=true, no frontend page yet).
+  Admin re-processing of agent extractions is not idempotent at the 
+  benchmark level. Re-running the admin extraction pipeline for a 
+  researcher submission currently inserts a new benchmark row instead 
+  of updating the benchmark already associated with that job, despite 
+  version history being available for CRUD updates.
 
 Still open:
 

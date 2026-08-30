@@ -1,22 +1,19 @@
 // Destination path: frontend/app/admin/submissions/page.tsx
-// New file.
+// Replaces the existing file in full.
 //
-// Phase 6 item 4: admin review queue for community submissions,
-// separate from the general extraction Pending Review queue so
-// community submissions (which carry domain-check and quality-score
-// context the admin-initiated flow doesn't need) are triaged in their
-// own dedicated view. Each row exposes three review actions --
-// Approve, Decline (reason required), and Request Better Extraction
-// (reason required, then an inline paid-model picker appears once
-// that decision is made and the re-extract action is triggered).
+// CHANGE (2026-08-28): the re-extract model dropdown now fetches from
+// GET /models (see backend/app/routers/models.py) instead of the
+// hardcoded PAID_MODELS array. Models are managed at /admin/models.
 
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  ModelOption,
   Submission,
   listAllSubmissions,
+  listModels,
   reextractSubmission,
   reviewSubmission,
 } from "../../../lib/api";
@@ -42,8 +39,6 @@ function DomainCheckBadge({ passed }: { passed: boolean | null }) {
   return <span className="badge" style={{ background: "#fef3c7", color: "#92400e" }}>Borderline</span>;
 }
 
-const PAID_MODELS = ["openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022"];
-
 export default function AdminSubmissionsPage() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [statusFilter, setStatusFilter] = useState("pending_review");
@@ -52,6 +47,9 @@ export default function AdminSubmissionsPage() {
   const [reextractModelById, setReextractModelById] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [modelsError, setModelsError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -66,6 +64,19 @@ export default function AdminSubmissionsPage() {
   }
 
   useEffect(() => { load(); }, [statusFilter]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await listModels(true);
+        setModels(data);
+      } catch {
+        setModelsError(
+          "Failed to load models -- add models at /admin/models, or check that the models API is reachable.",
+        );
+      }
+    })();
+  }, []);
 
   async function handleReview(id: string, decision: "approve" | "reject" | "needs_better_extraction") {
     const notes = notesById[id] || "";
@@ -86,7 +97,11 @@ export default function AdminSubmissionsPage() {
   }
 
   async function handleReextract(id: string) {
-    const model = reextractModelById[id] || PAID_MODELS[0];
+    const model = reextractModelById[id] || models[0]?.identifier;
+    if (!model) {
+      setError("No active model available -- add one at /admin/models before re-extracting.");
+      return;
+    }
     setBusyId(id);
     setError(null);
     try {
@@ -101,8 +116,9 @@ export default function AdminSubmissionsPage() {
 
   return (
     <div className="container">
-      <div className="topbar">
+      <div className="topbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2>Community Submissions</h2>
+        <Link href="/admin/models" style={{ fontSize: 13 }}>Manage models &rarr;</Link>
       </div>
 
       <div className="card" style={{ display: "flex", gap: 12 }}>
@@ -117,6 +133,7 @@ export default function AdminSubmissionsPage() {
       </div>
 
       {error && <p className="error">{error}</p>}
+      {modelsError && <p className="error">{modelsError}</p>}
 
       {loading ? (
         <p>Loading...</p>
@@ -175,13 +192,19 @@ export default function AdminSubmissionsPage() {
             {s.status === "needs_better_extraction" && (
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
                 <select
-                  value={reextractModelById[s.id] || PAID_MODELS[0]}
+                  value={reextractModelById[s.id] || models[0]?.identifier || ""}
                   onChange={(e) => setReextractModelById((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                  disabled={models.length === 0}
                 >
-                  {PAID_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  {models.length === 0 && <option value="">No active models</option>}
+                  {models.map((m) => (
+                    <option key={m.id} value={m.identifier}>
+                      {m.display_name ? `${m.display_name} (${m.identifier})` : m.identifier}
+                    </option>
+                  ))}
                 </select>
-                <button onClick={() => handleReextract(s.id)} disabled={busyId === s.id}>
-                  Run Re-extraction (Paid Model)
+                <button onClick={() => handleReextract(s.id)} disabled={busyId === s.id || models.length === 0}>
+                  Run Re-extraction
                 </button>
               </div>
             )}

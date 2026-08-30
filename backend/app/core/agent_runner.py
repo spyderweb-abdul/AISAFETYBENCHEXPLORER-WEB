@@ -826,7 +826,9 @@ def run_extraction(
     openai_api_key: str = "",
     anthropic_api_key: str = "",
     semantic_scholar_api_key: str = "",
-) -> None:
+    reuse_benchmark_id: uuid.UUID | None = None,
+    ) -> None:
+
     job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
     if job is None:
         logger.error("ExtractionJob %s not found", job_id)
@@ -906,6 +908,9 @@ def run_extraction(
                 raw["cited_by"] = int(raw["cited_by"])
             except (TypeError, ValueError):
                 raw["cited_by"] = 0
+        for _enum_field in ("code_dataset", "integration_option", "complexity_level"):
+            if raw.get(_enum_field) is None:
+                raw.pop(_enum_field, None)
 
         raw, _truncated_fields = _clamp_varchar_fields(raw)
         if _truncated_fields:
@@ -959,35 +964,56 @@ def run_extraction(
 
         create_schema = BenchmarkCreate(**raw)
 
-        signal_kwargs = {
-            key: bool(raw.get(key, False)) for key in _COMPLEXITY_SIGNAL_KEYS
-        }
-        signals = ComplexitySignals(
-            citation_count=create_schema.cited_by or 0,
-            **signal_kwargs,
-        )
+        signal_kwargs = {key: bool(raw.get(key, False)) for key in _COMPLEXITY_SIGNAL_KEYS}
+        signals = ComplexitySignals(citation_count=create_schema.cited_by or 0, **signal_kwargs,)
         complexity_level, complexity_justification = classify(signals)
 
         benchmark_data = create_schema.model_dump()
         benchmark_data["complexity_level"] = complexity_level
         benchmark_data["complexity_justification"] = complexity_justification
         benchmark_data["status"] = "pending_review"
-        benchmark_data["created_by_user_id"] = submitted_by
 
-        benchmark = Benchmark(**benchmark_data)
-        benchmark.use_cases = classify_use_cases(
-            benchmark.task_type, benchmark.description, benchmark.benchmark_name
-        )
-        benchmark.safety_dimensions = classify_safety_dimensions(benchmark.task_type)
-        db.add(benchmark)
-        db.flush()
+        existing_benchmark = None
+        if reuse_benchmark_id is not None:
+            existing_benchmark = (
+                db.query(Benchmark).filter(Benchmark.id == reuse_benchmark_id).first()
+            )
+            if existing_benchmark is None:
+                logger.warning(
+                    "Job %s: reuse_benchmark_id=%s was requested but no "
+                    "matching benchmark exists -- falling back to creating "
+                    "a new benchmark row.",
+                    job_id, reuse_benchmark_id,
+                )
+
+        if existing_benchmark is not None:
+            for field, value in benchmark_data.items():
+                if hasattr(existing_benchmark, field):
+                    setattr(existing_benchmark, field, value)
+            benchmark = existing_benchmark
+            benchmark.use_cases = classify_use_cases(
+                benchmark.task_type, benchmark.description, benchmark.benchmark_name
+            )
+            benchmark.safety_dimensions = classify_safety_dimensions(benchmark.task_type)
+            db.flush()
+
+            db.query(EvalMetric).filter(EvalMetric.benchmark_id == benchmark.id).delete()
+        else:
+            benchmark_data["created_by_user_id"] = submitted_by
+            benchmark = Benchmark(**benchmark_data)
+            benchmark.use_cases = classify_use_cases(
+                benchmark.task_type, benchmark.description, benchmark.benchmark_name
+            )
+            benchmark.safety_dimensions = classify_safety_dimensions(benchmark.task_type)
+            db.add(benchmark)
+            db.flush()
 
         metrics_persisted = _persist_eval_metrics(
             db, benchmark.id, raw.get("evaluation_metrics_catalogue", [])
         )
         logger.info(
-            "Job %s: persisted %d eval_metrics row(s) for benchmark %s.",
-            job_id, metrics_persisted, benchmark.id,
+            "Job %s: persisted %d eval_metrics row(s) for benchmark %s (reused=%s).",
+            job_id, metrics_persisted, benchmark.id, existing_benchmark is not None,
         )
 
         # github block

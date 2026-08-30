@@ -1,3 +1,12 @@
+// Destination path: frontend/app/admin/extraction/page.tsx
+// Replaces the existing file in full.
+//
+// CHANGE (2026-08-28): the model dropdown now fetches from GET /models
+// (see backend/app/routers/models.py) instead of importing the static
+// lib/modelOptions.ts array. Models are managed at /admin/models.
+// lib/modelOptions.ts can now be deleted -- nothing imports it once
+// this file and admin/submissions/page.tsx are both updated.
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -5,25 +14,13 @@ import Link from "next/link";
 import {
   ExtractionJob,
   JobVariance,
+  ModelOption,
   getJobVariance,
   listExtractionJobs,
+  listModels,
   reviewExtractionJob,
   submitExtractionJob,
 } from "../../../lib/api";
-
-const MODEL_OPTIONS = [
-  "openai/gpt-4o",
-  "openai/gpt-4o-mini",
-  "anthropic/claude-sonnet-5",
-  "anthropic/claude-opus-5",
-  "anthropic/claude-haiku-4-5-20251001",
-  "ollama/deepseek-v4-pro",
-  "ollama/deepseek-v4-flash",
-  "ollama/kimi-k3",
-  "ollama/kimi-k2.6",
-  "ollama/qwen3.5:397b",
-  "ollama/qwen3-coder:480b",
-];
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "bg-gray-200 text-gray-700",
@@ -58,9 +55,13 @@ export default function ExtractionPage() {
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("");
 
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+
   const [sourceType, setSourceType] = useState("doi");
   const [sourceValue, setSourceValue] = useState("");
-  const [modelUsed, setModelUsed] = useState(MODEL_OPTIONS[0]);
+  const [modelUsed, setModelUsed] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -88,6 +89,24 @@ export default function ExtractionPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    (async () => {
+      setModelsLoading(true);
+      setModelsError(null);
+      try {
+        const data = await listModels(true);
+        setModels(data);
+        if (data.length > 0) setModelUsed((prev) => prev || data[0].identifier);
+      } catch {
+        setModelsError(
+          "Failed to load models -- add models at /admin/models, or check that the models API is reachable.",
+        );
+      } finally {
+        setModelsLoading(false);
+      }
+    })();
+  }, []);
+
   async function handleCheckVariance() {
     if (!sourceValue) return;
     setVarianceLoading(true);
@@ -105,6 +124,10 @@ export default function ExtractionPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!modelUsed) {
+      setSubmitError("No model selected -- add at least one active model at /admin/models.");
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -144,18 +167,17 @@ export default function ExtractionPage() {
     }
   }
 
-  // FIX (2026-08-23): partition on the benchmark's actual status, not
-  // job.status. A high quality_score job gets job.status="done"
-  // immediately, even though its benchmark is still
-  // Benchmark.status="pending_review" until an admin approves it --
-  // filtering on job.status=="needs_review" alone silently hid every
-  // such benchmark from this queue with no way to review it.
   const pendingJobs = jobs.filter((j) => j.result_benchmark_status === "pending_review");
   const otherJobs = jobs.filter((j) => j.result_benchmark_status !== "pending_review");
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">Agent Extraction Panel</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">Agent Extraction Panel</h1>
+        <Link href="/admin/models" className="text-sm text-indigo-600 hover:underline">
+          Manage models &rarr;
+        </Link>
+      </div>
 
       <section className="bg-white rounded-lg border p-5 mb-8 shadow-sm">
         <h2 className="text-lg font-semibold mb-4">Submit New Extraction Job</h2>
@@ -194,12 +216,17 @@ export default function ExtractionPage() {
               <select
                 value={modelUsed}
                 onChange={(e) => setModelUsed(e.target.value)}
+                disabled={modelsLoading || models.length === 0}
                 className="border rounded px-3 py-2 text-sm"
               >
-                {MODEL_OPTIONS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                {models.length === 0 && <option value="">No active models</option>}
+                {models.map((m) => (
+                  <option key={m.id} value={m.identifier}>
+                    {m.display_name ? `${m.display_name} (${m.identifier})` : m.identifier}
+                  </option>
                 ))}
               </select>
+              {modelsError && <span className="text-xs text-red-600">{modelsError}</span>}
             </div>
           </div>
 
@@ -235,7 +262,7 @@ export default function ExtractionPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !modelUsed}
             className="bg-indigo-600 text-white px-5 py-2 rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
           >
             {submitting ? "Submitting..." : "Submit Job"}

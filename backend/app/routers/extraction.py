@@ -1,3 +1,17 @@
+# Destination path: backend/app/routers/extraction.py
+# Replaces the existing file in full.
+#
+# CHANGE (2026-08-28): new POST /extraction/jobs/{job_id}/rerun endpoint.
+# Lets an admin re-run the admin extraction pipeline on a job that has
+# already produced a benchmark, UPDATING that same benchmark row in
+# place (via agent_runner.run_extraction()'s new reuse_benchmark_id
+# parameter -- see agent_runner_reuse_benchmark_patch.py) instead of
+# creating a second, duplicate catalogue entry for the same paper.
+# This is the direct fix for: "I processed the same paper through the
+# admin's extraction, hoping the already catalogued benchmark will be
+# updated, however, a new entry of the same benchmark was catalogued
+# instead."
+
 from __future__ import annotations
 
 import uuid
@@ -174,3 +188,61 @@ def review_job(
     db.refresh(job)
     job.result_benchmark_status = benchmark.status
     return job
+
+
+@router.post("/jobs/{job_id}/rerun", response_model=ExtractionJobOut, status_code=status.HTTP_202_ACCEPTED)
+def rerun_job(
+    job_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+) -> ExtractionJob:
+    """NEW (2026-08-28): re-runs the admin extraction pipeline for a job
+    that already has a result_benchmark_id, UPDATING that same
+    Benchmark row in place instead of creating a duplicate. This is
+    the admin-panel equivalent of the submissions.py reextract flow,
+    for jobs submitted directly through the Agent Extraction Panel
+    rather than through the community submission form.
+
+    Requires job.result_benchmark_id to already be set -- if this job
+    never produced a benchmark (e.g. it failed before extraction
+    completed), use POST /extraction/jobs with the same source_value
+    instead, since there is nothing yet to update in place.
+    """
+    job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.result_benchmark_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This job has no result_benchmark_id to update -- it never "
+                "produced a benchmark. Submit a new job via POST "
+                "/extraction/jobs instead."
+            ),
+        )
+
+    reuse_benchmark_id = job.result_benchmark_id
+
+    job.status = "queued"
+    job.failure_reason = None
+    job.completed_at = None
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(
+        run_extraction,
+        job_id=job.id,
+        source_type=job.source_type,
+        source_value=job.source_value,
+        model_used=job.model_used,
+        submitted_by=job.submitted_by or current_user.id,
+        db=db,
+        openai_api_key=settings.OPENAI_API_KEY,
+        anthropic_api_key=settings.ANTHROPIC_API_KEY,
+        semantic_scholar_api_key=settings.SEMANTIC_SCHOLAR_API_KEY,
+        reuse_benchmark_id=reuse_benchmark_id,
+    )
+    job.result_benchmark_status = None
+    return job
+
