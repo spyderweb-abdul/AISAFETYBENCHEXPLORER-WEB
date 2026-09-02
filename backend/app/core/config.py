@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     HF_TOKEN: str = ""
     REDIS_URL: str = "redis://redis:6379/0"
 
+    POPULAR_CITATION_THRESHOLD: int = 500
+
     # Phase 6 item 4: community submission workflow.
     COMMUNITY_SUBMISSION_MODEL: str = "ollama/gpt-oss:120b-cloud"
     MIN_QUALITY_SCORE_FOR_REVIEW: float = 0.5

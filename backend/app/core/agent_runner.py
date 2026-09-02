@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 from app.schemas.benchmark import BenchmarkCreate
-from app.models.orm import Benchmark, EvalMetric, ExtractionJob, RepoStat
+from app.models.orm import Benchmark, EvalMetric, ExtractionJob, RepoStat, VocabTerm
 
 from app.core.complexity_classifier import ComplexitySignals, classify
 from app.core.paper_fetcher import fetch_source
@@ -19,6 +19,8 @@ from app.core.safety_dimension_classifier import classify_safety_dimensions
 from app.core.use_case_classifier import classify_use_cases
 from app.core.github_scrapper import fetch_github_stats
 from app.core.hf_scrapper import fetch_hf_dataset_stats
+from app.core.vocab_normalize import normalize_term, term_variants
+from app.core.citation_range import compute_citation_range
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,13 @@ ENTRY_MODALITIES = [
 
 LANGUAGE_SUPPORT = ["en", "zh", "ar", "fr", "hi", "ko", "Multilingual"]
 
-KNOWN_TASK_TYPES = [
+# DEMOTED (2026-09-01): this used to be the live prompt vocabulary, and had
+# already silently drifted from controlled_vocab.py's independent copy (the
+# same class of bug fixed once before for USE_CASES -- Known Gap 19). It is
+# now ONLY a fallback, used when VocabTerm has no active task_type rows
+# (fresh DB before migration 0009's seed, or a DB error at fetch time). See
+# _fetch_vocab_reference() and _build_system_prompt() below for the live path.
+_FALLBACK_TASK_TYPES = [
     "Safety", "Adversarial", "Adversarial Method", "Red Teaming", "Jailbreak",
     "Attack Eval", "Robustness", "Vulnerability", "Risk Assessment",
     "Bias", "Fairness", "Stereotype", "Gender", "Social", "Sociodemographics",
@@ -57,6 +65,19 @@ KNOWN_TASK_TYPES = [
     "Benchmark", "Evaluation", "Crowdsourced", "Lie Detection",
     "Capabilities", "Language",
 ]
+
+# NEW (2026-09-01): small bootstrap set only -- the real evaluation_metric
+# reference is expected to grow almost entirely from real extractions (see
+# _upsert_vocab_terms below), since metric naming is intentionally
+# paper-terminology-driven rather than a closed vocabulary.
+_FALLBACK_EVAL_METRICS = [
+    "Accuracy", "F1 Score", "Precision", "Recall", "Exact Match",
+    "Attack Success Rate", "Refusal Rate", "BLEU", "ROUGE-L",
+    "Mean Absolute Error (MAE)", "Spearman Correlation", "Pearson Correlation",
+    "AUROC", "Win Rate", "Pass@k",
+]
+
+_VOCAB_REFERENCE_LIMIT = 150
 
 _COMPLEXITY_SIGNAL_KEYS = [
     "cited_as_baseline_in_3plus_papers", "is_community_standard",
@@ -82,7 +103,13 @@ EVAL_METRIC_ROW_SCHEMA = {
     "notes": "string",
 }
 
-EVAL_METRICS_EXTRACTION_INSTRUCTIONS = """
+# CHANGE (2026-09-01): added the INCLUSION RULE paragraph -- the direct fix
+# for metrics being pulled from Related Work / literature-review mentions
+# instead of the benchmark's own evaluation protocol. Also added the
+# per-call KNOWN EVALUATION METRIC NAMES reference block, appended
+# dynamically by _build_eval_metrics_instructions() below rather than baked
+# into this fixed string.
+EVAL_METRICS_EXTRACTION_INSTRUCTIONS_TEMPLATE = """
 PHASE 2 -- SHEET 2 / EVALUATION METRICS CATALOGUE:
 
 In addition to the benchmark-level fields above, you must also return a
@@ -128,6 +155,29 @@ Hard requirements:
 - notes should include empirical results, limitations, use cases, and
   interactions with other metrics whenever the paper provides them.
 
+INCLUSION RULE (provenance-grounded -- this is the most important rule in
+this section): only include a metric in evaluation_metrics /
+evaluation_metrics_catalogue if the paper's OWN results for the benchmark
+being introduced actually compute it -- a results table, a reported score,
+or an explicit "we evaluate using X" statement tied to THIS benchmark's own
+test items or protocol. Do NOT include a metric that appears only in:
+  - Related Work / background discussion of how OTHER benchmarks or prior
+    papers evaluate similar tasks,
+  - motivation or introduction sections citing a metric by name without
+    applying it here,
+  - a passing mention of a metric family without a corresponding reported
+    number for this benchmark.
+Even a well-known, frequently-cited metric name (e.g. "F1", "BLEU") must be
+excluded if you cannot point to where THIS paper actually reports a score
+computed with it for THIS benchmark. Before finalizing your list, mentally
+verify each metric against a specific table, figure, or section (e.g.
+"Table 3", "Section 4.2 evaluation protocol") -- if you cannot identify
+where it is actually used, remove it. Conversely, do not omit a real,
+paper-defined metric because it does not resemble anything in the reference
+list below -- a metric with genuinely no name in the paper should still be
+extracted using a descriptive bracketed name (see Phase 5 Ambiguity Handling
+in the master prompt), not dropped.
+
 If no metrics are defined in the paper, return an empty list for both
 evaluation_metrics and evaluation_metrics_catalogue -- do not fabricate
 metrics that are not in the paper.
@@ -142,7 +192,15 @@ metrics that are not in the paper.
 # (persisted separately into EvalMetric rows -- see _persist_eval_metrics()).
 # The Phase 4 QA checklist / Phase 5 Excel generation are still NOT wired
 # into this runner -- see the TODO at the bottom of this file.
-SYSTEM_PROMPT_STUB = f"""
+#
+# CHANGE (2026-09-01): this is now a .format()-style TEMPLATE (placeholders
+# {known_task_types} and {eval_metric_reference_block}) built per-call by
+# _build_system_prompt(), instead of an f-string evaluated once at import
+# time against the hardcoded KNOWN_TASK_TYPES constant. This is what makes
+# the DB-backed vocabulary actually reach the model: every run now reflects
+# the CURRENT VocabTerm table contents, not whatever was hardcoded when this
+# module was last edited.
+SYSTEM_PROMPT_TEMPLATE = """
 You are an expert AI safety researcher specialising in LLM evaluation methodology,
 performing exhaustive, technically rigorous metadata extraction from an AI safety
 benchmark paper, following the same rigor as the AISafety_Benchmark_Extraction
@@ -177,8 +235,15 @@ PHASE 1 -- EXTRACT THESE FIELDS (return as a single JSON object):
 
 benchmark_name: short canonical name/abbreviation exactly as used in the paper,
     never invented.
-task_type: list of one or more values from KNOWN_TASK_TYPES below. If none fit,
-    infer the closest match.
+task_type: list of one or more values, ideally from the KNOWN_TASK_TYPES
+    reference below. INCLUSION RULE: only include a task type that this
+    benchmark's OWN test items and evaluation protocol actually measure --
+    not a related safety concern that is only discussed in the paper's
+    motivation, background, or Related Work section without being part of
+    what this benchmark itself tests. If the paper discusses adjacent risks
+    it does not test, do not add them here. If the benchmark's true task
+    type is not in the reference list, infer the closest genuinely-fitting
+    new value rather than force-fitting an existing one.
 benchmark_paper_title: full verbatim paper title.
 release_date: YYYY-MM-DD (use the 1st of the month if only month/year is known),
     or null if genuinely unknown.
@@ -200,10 +265,12 @@ dev_purpose: "Eval", "Train", or "Train & Eval" based on DEVELOPMENT_PURPOSE
 license: e.g. "MIT", "Apache 2.0", "CC-BY 4.0", "CC0", "Custom Research",
     or "Unknown" -- only use "Unknown" after having run search 2d AND checked
     the GitHub repo's LICENSE file AND the HuggingFace dataset card license tag.
-evaluation_metrics: list of ALL evaluation metrics named or defined in the
-    paper, using the paper's own exact terminology, consistently spelled the
-    same way here as in evaluation_metrics_catalogue (see hard requirements
-    below).
+evaluation_metrics: list of evaluation metrics ACTUALLY USED TO EVALUATE THIS
+    BENCHMARK'S OWN RESULTS (see the detailed INCLUSION RULE in the Phase 2
+    instructions below -- the same rule applies here; do not list a metric
+    that is only named in Related Work or background discussion), using the
+    paper's own exact terminology, consistently spelled the same way here as
+    in evaluation_metrics_catalogue.
 language_support: list of one or more values from LANGUAGE_SUPPORT below (ONLY
     these exact values are valid; use "Multilingual" if more than 5 languages
     are covered).
@@ -230,11 +297,14 @@ risk_critical_domain, novel_metric, complex_eval_pipeline, requires_domain_exper
 pluralistic_annotation_50plus, limited_reasoning_1_2_step, some_adversarial_testing,
 mixed_objective_subjective, standard_metrics_minor_adaptation, moderate_annotation_effort
 
-KNOWN_TASK_TYPES = {KNOWN_TASK_TYPES}
+KNOWN_TASK_TYPES (reference sample from the live catalogue, NOT exhaustive and
+NOT a closed enum -- reuse an existing value when it genuinely fits this
+benchmark's own evaluation, but infer a new value when none of these do; do
+not force-fit) = {known_task_types}
 
-ENTRY_MODALITIES (controlled vocabulary, exact values only) = {ENTRY_MODALITIES}
+ENTRY_MODALITIES (controlled vocabulary, exact values only) = {entry_modalities}
 
-LANGUAGE_SUPPORT (controlled vocabulary, exact values only) = {LANGUAGE_SUPPORT}
+LANGUAGE_SUPPORT (controlled vocabulary, exact values only) = {language_support}
 
 CREATED_BY_KEYWORDS:
 Human -> manually, annotated, human, crowdsourced, expert, curated
@@ -265,8 +335,6 @@ Return ONLY a single JSON object with the benchmark fields, the complexity
 signal booleans, and evaluation_metrics_catalogue. No prose, no markdown, no
 code fences.
 """.strip()
-
-SYSTEM_PROMPT_STUB = SYSTEM_PROMPT_STUB + "\n\n" + EVAL_METRICS_EXTRACTION_INSTRUCTIONS
 
 # Fallback normalization map in case the model still returns free text
 # despite the constrained prompt above. Extend this map as new mismatches
@@ -321,37 +389,17 @@ def _normalize_list(values: Any, allowed: list[str], aliases: dict[str, str]) ->
     return result
 
 
+# CHANGE (2026-09-01): these two are now thin wrappers around
+# app/core/vocab_normalize.py's shared normalize_term()/term_variants(), so
+# app/routers/vocab_terms.py's uniqueness check and this module's Sheet 1 <->
+# Sheet 2 reconciliation and vocab-catalogue upsert all use the EXACT same
+# normalization -- previously this logic was private to this file only.
 def _normalize_metric_name(value: Any) -> str:
-    return " ".join(str(value or "").strip().lower().split())
-
-
-_PAREN_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
-_PUNCT_RE = re.compile(r"[^a-z0-9 ]+")
+    return normalize_term(value)
 
 
 def _metric_name_variants(value: Any) -> set[str]:
-    """Returns a set of normalized forms of a metric name to reconcile
-    naming drift between evaluation_metrics and evaluation_metrics_catalogue.
-
-    This fixes a real production failure: the model wrote "relative decision
-    bias (LLM-RDT)" in one list and "relative decision bias" in the other,
-    which the old exact-match validator treated as two different metrics and
-    raised a ValueError, crashing the job. Trailing parenthetical
-    abbreviations, punctuation, and whitespace differences should not cause
-    a hard failure -- only a genuinely absent metric should.
-    """
-    base = _normalize_metric_name(value)
-    variants = {base}
-    stripped = _PAREN_SUFFIX_RE.sub("", base).strip()
-    if stripped:
-        variants.add(stripped)
-    no_punct = _PUNCT_RE.sub("", base).strip()
-    if no_punct:
-        variants.add(no_punct)
-    no_punct_stripped = _PUNCT_RE.sub("", stripped).strip()
-    if no_punct_stripped:
-        variants.add(no_punct_stripped)
-    return {v for v in variants if v}
+    return term_variants(value)
 
 
 def _validate_eval_metrics_catalogue(raw: dict[str, Any]) -> dict[str, Any]:
@@ -450,9 +498,9 @@ _METRIC_FIELD_MAP = {
 
 def _persist_eval_metrics(db: Session, benchmark_id: uuid.UUID, catalogue: list[dict[str, Any]]) -> int:
     """Inserts one EvalMetric row per validated Sheet 2 catalogue entry,
-    linked to the newly created Benchmark via benchmark_id. Returns the
-    number of rows inserted. Assumes _validate_eval_metrics_catalogue()
-    has already been run on the raw payload."""
+    linked to the Benchmark via benchmark_id. Returns the number of rows
+    inserted. Assumes _validate_eval_metrics_catalogue() has already been
+    run on the raw payload."""
     count = 0
     for row in catalogue:
         orm_kwargs = {
@@ -464,6 +512,7 @@ def _persist_eval_metrics(db: Session, benchmark_id: uuid.UUID, catalogue: list[
         count += 1
     return count
 
+
 _VARCHAR_100_FIELDS = [
     "benchmark_name", "benchmark_paper_title", "code_dataset",
     "created_by", "dev_purpose", "complexity_level",
@@ -471,6 +520,25 @@ _VARCHAR_100_FIELDS = [
     "dataset_repository", "paper_link", "status",
 ]
 _VARCHAR_LIMIT = 100
+
+# FIX (2026-09-01, carried over from an earlier session's patch, now applied):
+# code_dataset/integration_option/complexity_level are declared as
+# non-Optional enums with class-level defaults in BenchmarkBase (e.g.
+# code_dataset: CodeDataset = CodeDataset.no). That default ONLY applies when
+# the key is ABSENT from the dict passed to BenchmarkCreate(**raw) -- if the
+# model returns the key explicitly set to null (because it could not confirm
+# the value for this specific paper), Pydantic validates that literal None
+# against the enum and raises ValidationError, crashing the whole job. See
+# _pop_null_enum_defaults() below, called from run_extraction() right before
+# BenchmarkCreate(**raw).
+_ENUM_FIELDS_WITH_DEFAULTS = ("code_dataset", "integration_option", "complexity_level")
+
+
+def _pop_null_enum_defaults(raw: dict) -> dict:
+    for field in _ENUM_FIELDS_WITH_DEFAULTS:
+        if raw.get(field) is None:
+            raw.pop(field, None)
+    return raw
 
 
 def _clamp_varchar_fields(raw: dict) -> tuple[dict, list[str]]:
@@ -538,6 +606,7 @@ def _build_user_message(source_type: str, source_value: str, fetched: dict[str, 
         )
     return "\n".join(parts)
 
+
 def _parse_model_json_response(raw_text: str, log_label: str) -> dict[str, Any]:
     """Robustly parses a model's JSON response, tolerating the common
     failure modes seen across providers: markdown code fences (```json
@@ -593,7 +662,12 @@ def _parse_model_json_response(raw_text: str, log_label: str) -> dict[str, Any]:
         f"balanced-brace extraction. Response preview: {preview!r}"
     )
 
-def _call_openai(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+
+# CHANGE (2026-09-01): all three _call_* functions now take system_prompt as
+# an explicit parameter instead of closing over the old module-level
+# SYSTEM_PROMPT_STUB constant, since the prompt is now built per-call (with
+# live DB vocabulary) by _build_system_prompt() in run_extraction().
+def _call_openai(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any], system_prompt: str) -> tuple[dict[str, Any], dict[str, int]]:
     import openai
 
     client = openai.OpenAI(api_key=api_key)
@@ -601,22 +675,22 @@ def _call_openai(model_name: str, source_type: str, source_value: str, api_key: 
     response = client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT_STUB},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_msg},
         ],
         response_format={"type": "json_object"},
         temperature=0.0,
     )
-    # Roadmap item 12: capture token usage for per-run cost tracking.
     usage = {
         "input_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
         "output_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
     }
     return _parse_model_json_response(response.choices[0].message.content, "openai"), usage
 
+
 def _call_ollama(
     model_name: str, source_type: str, source_value: str,
-    base_url: str, api_key: str, fetched: dict[str, Any],
+    base_url: str, api_key: str, fetched: dict[str, Any], system_prompt: str,
     _max_tokens: int = 8192, _retry_on_empty: bool = True,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Calls an open-weight model (DeepSeek, Qwen, Kimi, gpt-oss, etc.)
@@ -631,8 +705,8 @@ def _call_ollama(
     internal chain-of-thought reasoning (their "Harmony" response
     format) before emitting a final answer -- if the budget runs out
     during that reasoning phase, the model returns an EMPTY response
-    rather than a partial one. Mirrors
-    _call_anthropic()'s existing retry-on-truncation pattern.
+    rather than a partial one. Mirrors _call_anthropic()'s existing
+    retry-on-truncation pattern.
     """
     import openai
 
@@ -653,7 +727,7 @@ def _call_ollama(
     response = client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT_STUB},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_msg},
         ],
         max_tokens=_max_tokens,
@@ -674,7 +748,7 @@ def _call_ollama(
             min(_max_tokens * 2, 32000),
         )
         return _call_ollama(
-            model_name, source_type, source_value, base_url, api_key, fetched,
+            model_name, source_type, source_value, base_url, api_key, fetched, system_prompt,
             _max_tokens=min(_max_tokens * 2, 32000), _retry_on_empty=False,
         )
 
@@ -685,7 +759,10 @@ def _call_ollama(
     return _parse_model_json_response(content, "ollama"), usage
 
 
-def _call_anthropic(model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any]) -> dict[str, Any]:
+def _call_anthropic(
+    model_name: str, source_type: str, source_value: str, api_key: str, fetched: dict[str, Any], system_prompt: str,
+    _max_tokens: int = 16384, _retry_on_truncation: bool = True,
+) -> tuple[dict[str, Any], dict[str, int]]:
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -693,9 +770,8 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
 
     message = client.messages.create(
         model=model_name,
-
-        max_tokens=16384,
-        system=SYSTEM_PROMPT_STUB,
+        max_tokens=_max_tokens,
+        system=system_prompt,
         messages=[{"role": "user", "content": user_msg}],
         tools=[
             {
@@ -705,6 +781,7 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
             }
         ],
     )
+
     usage = {
         "input_tokens": getattr(message.usage, "input_tokens", 0) or 0,
         "output_tokens": getattr(message.usage, "output_tokens", 0) or 0,
@@ -716,14 +793,13 @@ def _call_anthropic(model_name: str, source_type: str, source_value: str, api_ke
             "at max_tokens=%d. The final JSON may be incomplete or missing entirely.",
             source_type, source_value, _max_tokens,
         )
-
         if _retry_on_truncation and _max_tokens < 32000:
             logger.info(
                 "Retrying Anthropic call for %s:%s once with max_tokens=%d.",
                 source_type, source_value, min(_max_tokens * 2, 32000),
             )
             retry_parsed, retry_usage = _call_anthropic(
-                model_name, source_type, source_value, api_key, fetched,
+                model_name, source_type, source_value, api_key, fetched, system_prompt,
                 _max_tokens=min(_max_tokens * 2, 32000),
                 _retry_on_truncation=False,
             )
@@ -799,6 +875,7 @@ def _quality_score(data: dict[str, Any]) -> float:
     filled = sum(1 for k in required if data.get(k))
     return round(filled / len(required), 2)
 
+
 def _wrap_provider_error(provider: str, model_name: str, exc: Exception) -> Exception:
     if provider == "ollama":
         try:
@@ -816,6 +893,99 @@ def _wrap_provider_error(provider: str, model_name: str, exc: Exception) -> Exce
     return exc
 
 
+def _fetch_vocab_reference(db: Session, category: str, fallback: list[str]) -> list[str]:
+    """Fetches active, canonical VocabTerm entries for the given category,
+    ordered by usage_count so the most-established terms surface first.
+    Falls back to the hardcoded list (_FALLBACK_TASK_TYPES /
+    _FALLBACK_EVAL_METRICS) if the DB has no active rows yet for this
+    category (e.g. migration 0009 not yet applied) or the query fails for
+    any reason -- extraction must never hard-fail just because the
+    vocabulary table is temporarily empty or unreachable."""
+    try:
+        rows = (
+            db.query(VocabTerm.term)
+            .filter(
+                VocabTerm.category == category,
+                VocabTerm.is_active.is_(True),
+                VocabTerm.is_canonical.is_(True),
+            )
+            .order_by(VocabTerm.usage_count.desc())
+            .limit(_VOCAB_REFERENCE_LIMIT)
+            .all()
+        )
+        terms = [r[0] for r in rows]
+        return terms if terms else list(fallback)
+    except Exception as exc:
+        logger.warning(
+            "Could not fetch vocab_terms for category=%s (falling back to "
+            "hardcoded reference list): %s", category, exc,
+        )
+        return list(fallback)
+
+
+def _build_eval_metrics_instructions(eval_metric_reference: list[str]) -> str:
+    reference_block = ""
+    if eval_metric_reference:
+        reference_block = (
+            "\n\nKNOWN EVALUATION METRIC NAMES SEEN IN THIS CATALOGUE SO FAR "
+            "(reference sample, NOT exhaustive and NOT a closed vocabulary -- "
+            "reuse an existing name from this list ONLY if the paper's metric "
+            "is genuinely the same measure, for spelling/terminology "
+            "consistency. Do NOT force-fit a metric name from this list onto "
+            "a different measure, and do NOT omit or rename a real metric "
+            "just because it is missing from this list -- new metric names "
+            "are expected and correct as the catalogue grows):\n"
+            f"{eval_metric_reference}"
+        )
+    return EVAL_METRICS_EXTRACTION_INSTRUCTIONS_TEMPLATE + reference_block
+
+
+def _build_system_prompt(task_type_reference: list[str], eval_metric_reference: list[str]) -> str:
+    """Builds the full system prompt for this specific extraction call,
+    injecting the CURRENT DB vocabulary (task types and evaluation metric
+    names) as reference material. Replaces the old module-level
+    SYSTEM_PROMPT_STUB f-string, which baked in a hardcoded, since-drifted
+    KNOWN_TASK_TYPES constant once at import time."""
+    base = SYSTEM_PROMPT_TEMPLATE.format(
+        known_task_types=task_type_reference,
+        entry_modalities=ENTRY_MODALITIES,
+        language_support=LANGUAGE_SUPPORT,
+    )
+    return base + "\n\n" + _build_eval_metrics_instructions(eval_metric_reference)
+
+
+def _upsert_vocab_terms(db: Session, category: str, terms: list[str], benchmark_id: uuid.UUID | None) -> None:
+    """Records every task_type / evaluation_metrics value from a
+    successful extraction into VocabTerm, incrementing usage_count on a
+    repeat or inserting a new row (source='agent') for a genuinely new
+    term. Called AFTER the benchmark row is committed, never before a
+    failed/crashed extraction, so a bad run cannot pollute the reference
+    catalogue used to guide future extractions."""
+    for term in terms or []:
+        term = str(term).strip()
+        if not term:
+            continue
+        normalized = normalize_term(term)
+        existing = (
+            db.query(VocabTerm)
+            .filter(VocabTerm.category == category, VocabTerm.normalized_term == normalized)
+            .first()
+        )
+        if existing:
+            existing.usage_count = (existing.usage_count or 0) + 1
+        else:
+            db.add(VocabTerm(
+                category=category,
+                term=term,
+                normalized_term=normalized,
+                is_active=True,
+                is_canonical=True,
+                source="agent",
+                first_seen_benchmark_id=benchmark_id,
+                usage_count=1,
+            ))
+
+
 def run_extraction(
     job_id: uuid.UUID,
     source_type: str,
@@ -827,8 +997,17 @@ def run_extraction(
     anthropic_api_key: str = "",
     semantic_scholar_api_key: str = "",
     reuse_benchmark_id: uuid.UUID | None = None,
-    ) -> None:
-
+) -> None:
+    """reuse_benchmark_id: when set, this run UPDATES the existing
+    Benchmark row with this id in place instead of inserting a new one.
+    Used by app/routers/submissions.py's _run_reextraction_background()
+    (admin re-extraction of a community submission) and
+    app/routers/extraction.py's rerun_job() (admin re-running the Agent
+    Extraction Panel on a job that already produced a benchmark). Fixes
+    the bug where re-processing the same paper through the admin
+    extraction pipeline created a duplicate catalogue entry instead of
+    refreshing the one already under review.
+    """
     job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
     if job is None:
         logger.error("ExtractionJob %s not found", job_id)
@@ -837,6 +1016,13 @@ def run_extraction(
     try:
         job.status = "running"
         db.commit()
+
+        # NEW (2026-09-01): fetch the live vocabulary BEFORE building the
+        # system prompt, so every run reflects the current VocabTerm table
+        # rather than a hardcoded constant frozen at import time.
+        task_type_reference = _fetch_vocab_reference(db, "task_type", _FALLBACK_TASK_TYPES)
+        eval_metric_reference = _fetch_vocab_reference(db, "evaluation_metric", _FALLBACK_EVAL_METRICS)
+        system_prompt = _build_system_prompt(task_type_reference, eval_metric_reference)
 
         # Phase 0.1: actually fetch the paper via a real HTTP call (arXiv API,
         # Crossref, or direct PDF download) instead of asking the model to
@@ -852,11 +1038,11 @@ def run_extraction(
         provider, model_name = (model_used.split("/", 1) + [model_used])[:2]
         try:
             if provider == "openai":
-                raw, usage = _call_openai(model_name, source_type, source_value, openai_api_key, fetched)
+                raw, usage = _call_openai(model_name, source_type, source_value, openai_api_key, fetched, system_prompt)
             elif provider == "anthropic":
-                raw, usage = _call_anthropic(model_name, source_type, source_value, anthropic_api_key, fetched)
+                raw, usage = _call_anthropic(model_name, source_type, source_value, anthropic_api_key, fetched, system_prompt)
             elif provider == "ollama":
-                raw, usage = _call_ollama(model_name, source_type, source_value, settings.OLLAMA_BASE_URL_CLOUD, settings.OLLAMA_API_KEY, fetched)
+                raw, usage = _call_ollama(model_name, source_type, source_value, settings.OLLAMA_BASE_URL_CLOUD, settings.OLLAMA_API_KEY, fetched, system_prompt)
             else:
                 raise ValueError(f"Unknown model provider: {provider}")
         except Exception as provider_exc:
@@ -866,12 +1052,6 @@ def run_extraction(
         raw.setdefault("evaluation_metrics", [])
         raw.setdefault("evaluation_metrics_catalogue", [])
 
-        # If the model returned null/missing for this required identifier,
-        # log the full raw response for diagnosis (likely causes: the model
-        # could not fetch/read the source at all, or the crude brace-matching
-        # JSON extraction in _call_anthropic truncated the response) and fail
-        # the job with a clear, specific message instead of letting a generic
-        # pydantic ValidationError obscure the cause.
         if not raw.get("benchmark_name"):
             logger.error(
                 "Job %s: model returned no benchmark_name. Raw model output: %s",
@@ -888,7 +1068,6 @@ def run_extraction(
 
         if not raw.get("paper_link"):
             raw["paper_link"] = fetched.get("url") or source_value
-
 
         raw = _validate_eval_metrics_catalogue(raw)
 
@@ -908,9 +1087,9 @@ def run_extraction(
                 raw["cited_by"] = int(raw["cited_by"])
             except (TypeError, ValueError):
                 raw["cited_by"] = 0
-        for _enum_field in ("code_dataset", "integration_option", "complexity_level"):
-            if raw.get(_enum_field) is None:
-                raw.pop(_enum_field, None)
+        raw["citation_range"] = compute_citation_range(raw["cited_by"])
+
+        raw = _pop_null_enum_defaults(raw)
 
         raw, _truncated_fields = _clamp_varchar_fields(raw)
         if _truncated_fields:
@@ -919,7 +1098,6 @@ def run_extraction(
                 "DB columns (see PATCH note above _build_user_message for the real fix): %s.",
                 job_id, _truncated_fields,
             )
-
 
         github_stats = None
         hf_stats = None
@@ -964,8 +1142,13 @@ def run_extraction(
 
         create_schema = BenchmarkCreate(**raw)
 
-        signal_kwargs = {key: bool(raw.get(key, False)) for key in _COMPLEXITY_SIGNAL_KEYS}
-        signals = ComplexitySignals(citation_count=create_schema.cited_by or 0, **signal_kwargs,)
+        signal_kwargs = {
+            key: bool(raw.get(key, False)) for key in _COMPLEXITY_SIGNAL_KEYS
+        }
+        signals = ComplexitySignals(
+            citation_count=create_schema.cited_by or 0,
+            **signal_kwargs,
+        )
         complexity_level, complexity_justification = classify(signals)
 
         benchmark_data = create_schema.model_dump()
@@ -973,6 +1156,12 @@ def run_extraction(
         benchmark_data["complexity_justification"] = complexity_justification
         benchmark_data["status"] = "pending_review"
 
+        # FIX (2026-09-01, now actually applied): reuse_benchmark_id was
+        # accepted as a parameter but never referenced anywhere in this
+        # function body -- every run unconditionally created a new
+        # Benchmark row. This is the direct fix for admin re-processing
+        # creating a duplicate catalogue entry instead of updating the
+        # benchmark already under review.
         existing_benchmark = None
         if reuse_benchmark_id is not None:
             existing_benchmark = (
@@ -997,6 +1186,9 @@ def run_extraction(
             benchmark.safety_dimensions = classify_safety_dimensions(benchmark.task_type)
             db.flush()
 
+            # Replace the previous run's Sheet 2 rows instead of appending on
+            # top of them, so re-extraction never leaves stale metrics mixed
+            # in with the fresh catalogue.
             db.query(EvalMetric).filter(EvalMetric.benchmark_id == benchmark.id).delete()
         else:
             benchmark_data["created_by_user_id"] = submitted_by
@@ -1016,20 +1208,19 @@ def run_extraction(
             job_id, metrics_persisted, benchmark.id, existing_benchmark is not None,
         )
 
-        # github block
         if github_stats is not None and github_stats.error is None:
             db.add(RepoStat(
                 id=uuid.uuid4(),
                 benchmark_id=benchmark.id,
                 source="github",
-                url=raw["code_repository"],       
+                url=raw["code_repository"],
                 owner=github_stats.owner,
                 name=github_stats.repo,
                 stars_or_likes=github_stats.stars,
                 forks=github_stats.forks,
                 open_issues=github_stats.open_issues,
                 contributors_count=github_stats.contributors_count,
-                last_commit_at=github_stats.last_commit_at,   
+                last_commit_at=github_stats.last_commit_at,
                 days_since_last_activity=github_stats.days_since_last_commit,
                 activity_status=github_stats.activity_status,
                 is_archived=github_stats.is_archived,
@@ -1038,18 +1229,17 @@ def run_extraction(
                 fetched_at=github_stats.fetched_at,
             ))
 
-        # hf block
         if hf_stats is not None and hf_stats.error is None:
             db.add(RepoStat(
                 id=uuid.uuid4(),
                 benchmark_id=benchmark.id,
                 source="hf_dataset",
-                url=raw.get("dataset_repository") or "", 
+                url=raw.get("dataset_repository") or "",
                 owner=hf_stats.owner,
                 name=hf_stats.name,
-                stars_or_likes=hf_stats.likes,             
+                stars_or_likes=hf_stats.likes,
                 downloads=hf_stats.downloads,
-                last_commit_at=hf_stats.last_modified_at,  
+                last_commit_at=hf_stats.last_modified_at,
                 days_since_last_activity=hf_stats.days_since_last_modified,
                 activity_status=hf_stats.activity_status,
                 is_private=hf_stats.is_private,
@@ -1058,6 +1248,14 @@ def run_extraction(
                 fetch_error=hf_stats.error,
                 fetched_at=hf_stats.fetched_at,
             ))
+
+        # NEW (2026-09-01): grow the reference vocabulary from this
+        # successful extraction, AFTER the benchmark row exists (so
+        # first_seen_benchmark_id is valid) and only on the success path
+        # (a failed/crashed job never reaches here, so it cannot pollute
+        # future prompts with bad terms).
+        _upsert_vocab_terms(db, "task_type", benchmark.task_type, benchmark.id)
+        _upsert_vocab_terms(db, "evaluation_metric", benchmark.evaluation_metrics, benchmark.id)
 
         if _truncated_fields:
             job.status = "needs_review"
@@ -1073,6 +1271,7 @@ def run_extraction(
         job.estimated_cost_usd = estimate_cost_usd(
             model_used, usage.get("input_tokens"), usage.get("output_tokens")
         )
+
         db.commit()
         logger.info("Extraction job %s completed. quality_score=%.2f status=%s", job_id, qs, job.status)
 
@@ -1085,4 +1284,3 @@ def run_extraction(
             job.failure_reason = str(exc)[:2000]
             db.commit()
         logger.exception("Extraction job %s failed: %s", job_id, exc)
-

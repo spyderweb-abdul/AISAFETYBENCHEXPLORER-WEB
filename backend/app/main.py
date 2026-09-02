@@ -1,19 +1,19 @@
 # Destination path: backend/app/main.py
 # Replaces the existing file in full.
-
-# CHANGE (2026-08-28): registers the new models router (admin CRUD for
-# the ModelOption catalogue, backend/app/routers/models.py), so the
-# Agent Extraction Panel and community submissions re-extract dropdown
-# can be admin-managed from the DB instead of hardcoded frontend
-# arrays. This supersedes the earlier main_py_router_registration_patch.md
-# guess -- that patch assumed a shorter router list than this file
-# actually has (it did not know about repo_stats, stats, or users).
 #
-# CHANGE (Phase 6 items 3/4, prior session): registers three routers --
-# submissions (gated community submission workflow), notifications
-# (per-user in-app inbox), and users (minimal admin-only user
-# management, needed for the is_trusted_submitter toggle). No other
-# router, middleware, or the /health endpoint changed.
+# CHANGE (2026-09-01): registers the new vocab_terms router (admin CRUD
+# for the VocabTerm task_type/evaluation_metric catalogue,
+# backend/app/routers/vocab_terms.py). Kept as a separate router import
+# name from the existing vocab.py (already registered below) to avoid
+# a naming collision -- vocab.py serves the static controlled-vocabulary
+# lists for BenchmarkForm.tsx dropdowns; vocab_terms.py serves the new,
+# agent-grown, DB-backed catalogue.
+#
+# CHANGE (2026-08-28): registers the models router (admin CRUD for the
+# ModelOption catalogue, backend/app/routers/models.py).
+#
+# CHANGE (Phase 6 items 3/4, prior session): registers submissions,
+# notifications, and users routers.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,12 +38,13 @@ from app.routers import (
     submissions,
     users,
     vocab,
+    vocab_terms,
 )
 
 app = FastAPI(
     title="AISafetyBenchExplorer API",
-    version="0.5.0",
-    description="Phase 6: gated community submissions, admin review workflow, and notifications.",
+    version="0.6.0",
+    description="Phase 6: gated community submissions, admin review workflow, notifications, admin model catalogue, and DB-backed vocabulary guidance.",
 )
 
 app.state.limiter = limiter
@@ -72,6 +73,7 @@ app.include_router(submissions.router)
 app.include_router(notifications.router)
 app.include_router(users.router)
 app.include_router(models.router)
+app.include_router(vocab_terms.router)
 
 
 @app.get("/health")

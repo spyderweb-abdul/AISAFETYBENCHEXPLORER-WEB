@@ -1,17 +1,22 @@
 // Destination path: frontend/app/submit/page.tsx
-// Replaces the existing file in full. (Supersedes the earlier draft:
-// that version only redirected logged-out visitors to /signup. It did
-// not proactively redirect ADMIN accounts away, so an admin could
-// still see and fill out the submission form, only to have it fail
-// with a 403 on actual submit (backend's require_researcher, added
-// last session). Now checks role via fetchMe() and redirects admins
-// to /admin/benchmarks immediately, matching the same guard pattern
-// used in app/admin/layout.tsx.)
+// Replaces the existing file in full.
+//
+// FIX (2026-09-02): Next.js build failure -- "Error occurred
+// prerendering page /submit" / build worker exited with code 1.
+// Root cause: useSearchParams() (added in the previous session's
+// notification-highlight fix) bails out of static rendering and MUST
+// be wrapped in a <Suspense> boundary in the App Router, or `next
+// build`'s prerender step fails outright. All component logic that
+// reads searchParams (and therefore needs to live inside the Suspense
+// boundary) is moved into a new inner component, SubmitPageInner;
+// the default export is now a thin wrapper that renders
+// <Suspense><SubmitPageInner /></Suspense>. No behavior changed --
+// same highlight-and-scroll logic as before, just correctly wrapped.
 
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Cookies from "js-cookie";
 import { Submission, createSubmission, fetchMe, listMySubmissions } from "../../lib/api";
 
@@ -30,8 +35,11 @@ function StatusBadge({ status }: { status: string }) {
   return <span className="badge" style={style}>{status.replaceAll("_", " ")}</span>;
 }
 
-export default function SubmitPage() {
+function SubmitPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const highlightId = searchParams.get("highlight");
+
   const [doi, setDoi] = useState("");
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [checking, setChecking] = useState(true);
@@ -40,6 +48,9 @@ export default function SubmitPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   useEffect(() => {
     if (!Cookies.get("access_token")) {
@@ -49,7 +60,6 @@ export default function SubmitPage() {
     fetchMe()
       .then((u) => {
         if (u.role === "admin") {
-
           router.replace("/admin/benchmarks");
           return;
         }
@@ -74,6 +84,19 @@ export default function SubmitPage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!highlightId || loading) return;
+    const found = submissions.some((s) => s.id === highlightId);
+    if (!found) return;
+
+    setHighlightedId(highlightId);
+    const el = rowRefs.current[highlightId];
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    const timer = setTimeout(() => setHighlightedId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [highlightId, loading, submissions]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -144,7 +167,15 @@ export default function SubmitPage() {
             </thead>
             <tbody>
               {submissions.map((s) => (
-                <tr key={s.id}>
+                <tr
+                  key={s.id}
+                  ref={(el) => { rowRefs.current[s.id] = el; }}
+                  style={
+                    highlightedId === s.id
+                      ? { boxShadow: "inset 0 0 0 2px #6366f1", transition: "box-shadow 0.3s ease" }
+                      : undefined
+                  }
+                >
                   <td>{s.source_value}</td>
                   <td><StatusBadge status={s.status} /></td>
                   <td>{s.quality_score != null ? s.quality_score.toFixed(2) : "-"}</td>
@@ -161,5 +192,13 @@ export default function SubmitPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function SubmitPage() {
+  return (
+    <Suspense fallback={<div className="container"><p>Loading...</p></div>}>
+      <SubmitPageInner />
+    </Suspense>
   );
 }

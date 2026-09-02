@@ -1,10 +1,33 @@
+// Destination path: frontend/components/BenchmarkForm.tsx
+// Replaces the existing file in full.
+//
+// CHANGE (2026-09-02):
+// 1. Task Type now fetches from GET /vocab-terms?category=task_type
+//    (the agent-grown VocabTerm catalogue, listVocabTerms() in
+//    lib/api.ts) instead of vocab.task_type from GET /vocab, which
+//    served controlled_vocab.py's small, already-known-stale static
+//    list. Rendered with the new TagMultiSelect component (searchable,
+//    chip-based) instead of a checkbox-per-option grid, so the panel
+//    no longer grows physically larger as the catalogue's task type
+//    list grows over time.
+// 2. Removed "Phase 5" from the auto-classified panel's label text.
+// 3. Citation Range is now a disabled, computed-only display (backend
+//    always overwrites it from Cited By via
+//    app/core/citation_range.py's compute_citation_range() -- see the
+//    paired backend/app/routers/benchmarks.py change) instead of a
+//    free-text input nobody was ever populating correctly.
+// 4. Complexity Justification is now a textarea with a clearer label
+//    ("Complexity Reason") instead of a single-line input, so the full
+//    reason is readable rather than truncated/scrolled.
+
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Benchmark, classifyComplexity, createBenchmark, fetchVocab, updateBenchmark, Vocab
+  Benchmark, classifyComplexity, createBenchmark, fetchVocab, listVocabTerms, updateBenchmark, Vocab
 } from "../lib/api";
+import TagMultiSelect from "./TagMultiSelect";
 
 interface Props {
   initial?: Partial<Benchmark>;
@@ -14,6 +37,7 @@ interface Props {
 export default function BenchmarkForm({ initial, benchmarkId }: Props) {
   const router = useRouter();
   const [vocab, setVocab] = useState<Vocab | null>(null);
+  const [taskTypeOptions, setTaskTypeOptions] = useState<string[]>([]);
   const [form, setForm] = useState<Record<string, any>>({
     benchmark_name: "",
     task_type: [],
@@ -63,6 +87,19 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
 
   useEffect(() => { fetchVocab().then(setVocab); }, []);
 
+  useEffect(() => {
+    listVocabTerms({ category: "task_type", active_only: true })
+      .then((terms) => setTaskTypeOptions(terms.map((t) => t.term)))
+      .catch(() => setTaskTypeOptions([]));
+  }, []);
+
+  // Keep the "Run Complexity Classifier" signal in sync with the
+  // Cited By field so the classifier and the citation_range display
+  // (computed server-side) never disagree about the citation count.
+  useEffect(() => {
+    setSignals((prev) => ({ ...prev, citation_count: Number(form.cited_by) || 0 }));
+  }, [form.cited_by]);
+
   function setField(name: string, value: any) {
     setForm((prev) => ({ ...prev, [name]: value }));
   }
@@ -91,9 +128,14 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const { id, status, created_at, updated_at, use_cases, safety_dimensions, ...updatableFields } = form as any;
+      // citation_range is excluded here too -- the backend always
+      // recomputes it from cited_by (see app/routers/benchmarks.py's
+      // _stamp_citation_range()), so submitting the disabled display
+      // value would be a no-op at best; excluding it keeps the payload
+      // honest about what this form actually controls.
+      const { id, status, created_at, updated_at, use_cases, safety_dimensions, citation_range, ...updatableFields } = form as any;
       const payload = { ...updatableFields, cited_by: Number(form.cited_by) || 0 };
-  
+
       if (benchmarkId) {
         await updateBenchmark(benchmarkId, payload);
       } else {
@@ -118,7 +160,7 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
             background: "#f3f4f6", fontSize: 12,
           }}
         >
-          <strong>Auto-classified (Phase 5, recomputed on every save):</strong>
+          <strong>Auto-classified (recomputed on every save):</strong>
           {form.use_cases?.length > 0 && (
             <p style={{ margin: "6px 0 0" }}>
               Use Cases: {form.use_cases.map((u: string) => (
@@ -162,20 +204,13 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
         <textarea rows={3} value={form.description || ""} onChange={(e) => setField("description", e.target.value)} />
       </div>
 
-      <div className="field">
-        <label>Task Type (controlled vocabulary, multi-select)</label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {vocab.task_type.map((t) => (
-            <label key={t} style={{ fontWeight: 400, fontSize: 12 }}>
-              <input
-                type="checkbox"
-                checked={form.task_type.includes(t)}
-                onChange={() => toggleMultiValue("task_type", t)}
-              /> {t}
-            </label>
-          ))}
-        </div>
-      </div>
+      <TagMultiSelect
+        label="Task Type (searchable, grows from the live catalogue)"
+        options={taskTypeOptions}
+        selected={form.task_type}
+        onChange={(next) => setField("task_type", next)}
+        placeholder="Search task types, e.g. Jailbreak, Bias, Hallucination..."
+      />
 
       <div className="form-grid">
         <div className="field">
@@ -217,8 +252,8 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
           <input type="number" value={form.cited_by} onChange={(e) => setField("cited_by", e.target.value)} />
         </div>
         <div className="field">
-          <label>Citation Range</label>
-          <input value={form.citation_range || ""} onChange={(e) => setField("citation_range", e.target.value)} placeholder="e.g. 101-500" />
+          <label>Citation Range (auto-computed from Cited By)</label>
+          <input value={form.citation_range || ""} disabled style={{ background: "#f3f4f6", color: "#666" }} />
         </div>
         <label>Entry Modalities (controlled vocabulary, multi-select)</label>
         <div>
@@ -257,7 +292,7 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
             )
           }
           placeholder="e.g. Attack Success Rate, Refusal Rate"
-        />               
+        />
         <div className="field">
           <label>Code Repository</label>
           <input value={form.code_repository || ""} onChange={(e) => setField("code_repository", e.target.value)} />
@@ -297,8 +332,13 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
           </select>
         </div>
         <div className="field">
-          <label>Justification</label>
-          <input value={form.complexity_justification || ""} onChange={(e) => setField("complexity_justification", e.target.value)} />
+          <label>Complexity Reason (why this level was assigned)</label>
+          <textarea
+            rows={2}
+            value={form.complexity_justification || ""}
+            onChange={(e) => setField("complexity_justification", e.target.value)}
+            placeholder="Filled automatically by Run Complexity Classifier -- editable if you need to refine the wording."
+          />
         </div>
       </div>
 

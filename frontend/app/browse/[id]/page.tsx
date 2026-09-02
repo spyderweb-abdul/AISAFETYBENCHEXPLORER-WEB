@@ -1,3 +1,13 @@
+// Destination path: frontend/app/browse/[id]/page.tsx
+// Replaces the existing file in full.
+//
+// CHANGE (2026-09-02): ComplexityBadge now receives
+// justification={benchmark.complexity_justification}, so hovering the
+// badge next to the benchmark name also shows the reason -- in
+// addition to the existing "Complexity Justification" paragraph
+// further down the page, which already displayed this field in full
+// and is unchanged. No other logic on this page changed.
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -58,7 +68,7 @@ export default function BrowseDetailPage() {
 
       <div className="topbar">
         <h1 style={{ margin: 0 }}>{benchmark.benchmark_name}</h1>
-        <ComplexityBadge level={benchmark.complexity_level} />
+        <ComplexityBadge level={benchmark.complexity_level} justification={benchmark.complexity_justification} />
       </div>
 
       <div className="card">

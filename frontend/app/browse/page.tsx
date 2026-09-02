@@ -1,19 +1,17 @@
 // Destination path: frontend/app/browse/page.tsx
 // Replaces the existing file in full.
 //
-// CHANGES in this version (Known Gap item 19 fix, this session):
-// The Use Case dropdown no longer imports the hardcoded
-// USE_CASE_CATEGORIES constant from lib/api.ts (removed there in this
-// same session). It now reads vocab.use_cases, same as every other
-// controlled-vocabulary dropdown on this page (Task Type, Complexity
-// Level, Language Support) -- closing the drift risk where the
-// frontend's own copy of the category list could silently diverge
-// from app/core/use_case_classifier.py's real output space.
-//
-// This build also carries forward the earlier Phase 5 session's
-// changes: License and Language Support as real server-side filters,
-// a Release Date range filter, and the published-only CSV/Excel
-// export section.
+// CHANGE (2026-09-02): the Task Type filter dropdown now fetches from
+// GET /vocab-terms?category=task_type (listVocabTerms() in lib/api.ts
+// -- the agent-grown VocabTerm catalogue) instead of vocab.task_type
+// from GET /vocab (app/core/controlled_vocab.py's static list). This
+// closes the same staleness gap already fixed in BenchmarkForm.tsx:
+// newly agent-added task types (from real extractions) now appear as
+// filter options here too, without a code change each time the
+// catalogue grows. Every other dropdown on this page (Use Case,
+// Complexity Level, Language Support) is unchanged and still reads
+// from GET /vocab, since those remain small, stable, genuinely-fixed
+// vocabularies with no equivalent growth mechanism.
 
 "use client";
 
@@ -26,20 +24,22 @@ import {
   exportPublicXlsxUrl,
   fetchVocab,
   listBenchmarks,
+  listVocabTerms,
 } from "../../lib/api";
 import ComplexityBadge from "../../components/ComplexityBadge";
 
 /**
  * Phase 5 browse/filter page. Task Type, Complexity Level, Use Case,
  * Search, License, Language Support, and Release Date are all real
- * server-side query params against GET /benchmarks. Every
- * controlled-vocabulary dropdown (Task Type, Use Case, Complexity
- * Level, Language Support) is driven by GET /vocab -- there is no
- * hardcoded category list left in this component.
+ * server-side query params against GET /benchmarks. Use Case,
+ * Complexity Level, and Language Support dropdowns are driven by
+ * GET /vocab; Task Type is driven by the live GET /vocab-terms
+ * catalogue instead (see the CHANGE note above).
  */
 export default function BrowsePage() {
   const [benchmarks, setBenchmarks] = useState<Benchmark[]>([]);
   const [vocab, setVocab] = useState<Vocab | null>(null);
+  const [taskTypeOptions, setTaskTypeOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,6 +79,12 @@ export default function BrowsePage() {
   }, []);
 
   useEffect(() => {
+    listVocabTerms({ category: "task_type", active_only: true })
+      .then((terms) => setTaskTypeOptions(terms.map((t) => t.term).sort((a, b) => a.localeCompare(b))))
+      .catch(() => setTaskTypeOptions([]));
+  }, []);
+
+  useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, taskType, useCase, complexity, license, languageSupport, releaseDateFrom, releaseDateTo]);
@@ -104,7 +110,7 @@ export default function BrowsePage() {
         />
         <select value={taskType} onChange={(e) => setTaskType(e.target.value)}>
           <option value="">All task types</option>
-          {(vocab?.task_type ?? []).map((t) => (
+          {taskTypeOptions.map((t) => (
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
@@ -181,7 +187,7 @@ export default function BrowsePage() {
                   <td><Link href={`/browse/${b.id}`}>{b.benchmark_name}</Link></td>
                   <td>{b.task_type.join(", ")}</td>
                   <td>{b.use_cases?.join(", ") || "-"}</td>
-                  <td><ComplexityBadge level={b.complexity_level} /></td>
+                  <td><ComplexityBadge level={b.complexity_level} justification={b.complexity_justification} /></td>
                   <td>{b.license ?? "-"}</td>
                   <td>{b.cited_by}</td>
                 </tr>

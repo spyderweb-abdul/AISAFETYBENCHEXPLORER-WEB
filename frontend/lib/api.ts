@@ -1,28 +1,11 @@
 // Destination path: frontend/lib/api.ts
 // Replaces the existing file in full.
 //
-// CHANGE (2026-08-28): added ModelOption type and listModels/
-// createModel/updateModel/deleteModel functions, backing the new
-// admin-managed model catalogue (backend/app/routers/models.py). This
-// supersedes the earlier api_ts_model_functions_patch.md guess -- this
-// is the real file, with the new block appended at the end, preserving
-// everything else exactly as-is including the existing
-// normalizeSubmission() Decimal-serialization fix.
-//
-// BUG FIX (prior session): TypeError: s.quality_score.toFixed is not a
-// function, thrown on /submit and /admin/submissions. Root cause:
-// FastAPI/Pydantic serializes Decimal columns (Submission.quality_score
-// is a Postgres Numeric(3,2), see models/orm.py) as JSON STRINGS (e.g.
-// "0.75"), not numbers -- but the Submission TypeScript interface
-// declared quality_score as `number | null`, so every consumer
-// trusted a type the API never actually provided. The existing admin
-// Extraction Panel (app/admin/extraction/page.tsx) already works
-// around this same class of bug defensively at each render site via
-// Number(job.quality_score); this fix instead normalizes ONCE at the
-// API boundary via normalizeSubmission(), applied to every function
-// that returns a Submission or Submission[], so every current and
-// future consumer of this type can trust quality_score is a real
-// number (or null) without needing its own defensive Number() call.
+// CHANGE (2026-09-01): added VocabTerm type and listVocabTerms/
+// createVocabTerm/updateVocabTerm/deleteVocabTerm functions, backing
+// the new /admin/vocab CRUD page and backend/app/routers/vocab_terms.py.
+// Appended after the ModelOption block added last session; everything
+// else in this file is unchanged.
 
 import axios from "axios";
 import Cookies from "js-cookie";
@@ -390,15 +373,6 @@ export interface Submission {
   reviewed_at: string | null;
 }
 
-/** BUG FIX: FastAPI serializes Submission.quality_score (a Postgres
- * Numeric(3,2) / Python Decimal) as a JSON STRING, not a number --
- * e.g. "0.75" rather than 0.75. Every function below that returns a
- * Submission or Submission[] passes its raw response through this
- * normalizer so every consumer of the Submission type can trust
- * quality_score really is `number | null`, matching the interface
- * above, instead of needing its own defensive Number(...) call at
- * every render site (which is how this bug slipped through -- the
- * interface claimed a type the API never actually provided). */
 function normalizeSubmission(raw: any): Submission {
   return {
     ...raw,
@@ -494,11 +468,7 @@ export async function setTrustedSubmitter(userId: string, trusted: boolean) {
   return data;
 }
 
-// ---- NEW (2026-08-28): admin model catalogue ----
-// Backs backend/app/routers/models.py. Replaces the hardcoded
-// frontend/lib/modelOptions.ts MODEL_OPTIONS array and
-// admin/submissions/page.tsx's PAID_MODELS array -- both consumer
-// pages now call listModels() instead.
+// ---- Admin model catalogue ----
 
 export interface ModelOption {
   id: string;
@@ -536,4 +506,57 @@ export async function updateModel(id: string, payload: Partial<ModelOptionInput>
 
 export async function deleteModel(id: string) {
   await api.delete(`/models/${id}`);
+}
+
+// ---- NEW (2026-09-01): admin vocabulary catalogue (task types + eval metrics) ----
+// Backs backend/app/routers/vocab_terms.py and frontend/app/admin/vocab/page.tsx.
+
+export interface VocabTerm {
+  id: string;
+  category: "task_type" | "evaluation_metric";
+  term: string;
+  normalized_term: string;
+  is_active: boolean;
+  is_canonical: boolean;
+  canonical_term_id: string | null;
+  usage_count: number;
+  source: "agent" | "admin";
+  first_seen_benchmark_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VocabTermInput {
+  category: "task_type" | "evaluation_metric";
+  term: string;
+  is_active?: boolean;
+  is_canonical?: boolean;
+  canonical_term_id?: string | null;
+}
+
+export async function listVocabTerms(params?: {
+  category?: "task_type" | "evaluation_metric";
+  active_only?: boolean;
+  canonical_only?: boolean;
+  unreviewed_only?: boolean;
+}) {
+  const { data } = await api.get("/vocab-terms", { params });
+  return data as VocabTerm[];
+}
+
+export async function createVocabTerm(payload: VocabTermInput) {
+  const { data } = await api.post("/vocab-terms", payload);
+  return data as VocabTerm;
+}
+
+export async function updateVocabTerm(
+  id: string,
+  payload: Partial<Omit<VocabTermInput, "category">>,
+) {
+  const { data } = await api.patch(`/vocab-terms/${id}`, payload);
+  return data as VocabTerm;
+}
+
+export async function deleteVocabTerm(id: string) {
+  await api.delete(`/vocab-terms/${id}`);
 }

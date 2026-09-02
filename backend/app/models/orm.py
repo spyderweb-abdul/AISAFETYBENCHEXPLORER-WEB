@@ -1,21 +1,3 @@
-# Destination path: backend/app/models/orm.py
-# Replaces the existing file in full.
-#
-# CHANGE (2026-08-28): new ModelOption table. Replaces the hardcoded
-# MODEL_OPTIONS (frontend/lib/modelOptions.ts) / PAID_MODELS
-# (frontend/app/admin/submissions/page.tsx) frontend arrays with an
-# admin-manageable catalogue, CRUD'd via backend/app/routers/models.py
-# and surfaced at frontend/app/admin/models/page.tsx. Both the Agent
-# Extraction Panel and the submissions re-extract dropdown now fetch
-# GET /models instead of importing a static list.
-#
-# ExtractionJob.model_used and Submission.model_used remain plain
-# String columns, NOT foreign keys to model_options.id -- this is
-# deliberate. A job/submission always records the exact identifier
-# string that was actually used at run time, so deleting or
-# deactivating a ModelOption later never breaks historical job/
-# submission records or requires a cascading FK constraint.
-
 import uuid
 from datetime import datetime
 from sqlalchemy import (
@@ -190,24 +172,10 @@ class Notification(Base):
 
 
 class ModelOption(Base):
-    """NEW (2026-08-28): admin-manageable catalogue of models offered
-    in the Agent Extraction Panel's "Model" dropdown and the community
-    submissions "re-extract" dropdown. Replaces the previously
-    hardcoded frontend arrays (lib/modelOptions.ts's MODEL_OPTIONS,
-    admin/submissions/page.tsx's PAID_MODELS).
-
+    """Admin-manageable catalogue of models offered in the Agent
+    Extraction Panel and the community submissions re-extract dropdown.
     identifier is the exact "provider/model" string passed as
-    model_used to POST /extraction/jobs, POST /submissions/{id}/reextract,
-    and ultimately to agent_runner.run_extraction() -- which splits it
-    on "/" to dispatch to _call_openai / _call_anthropic / _call_ollama.
-    provider is stored redundantly (rather than derived on every read)
-    so the admin UI can group/filter by provider without re-parsing
-    identifier everywhere.
-
-    is_active controls whether a model appears in the dropdowns without
-    deleting its row (and without touching any ExtractionJob/Submission
-    that already recorded this identifier as model_used -- those are
-    plain string columns, not foreign keys to this table)."""
+    model_used. See backend/app/routers/models.py."""
 
     __tablename__ = "model_options"
 
@@ -218,6 +186,56 @@ class ModelOption(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     notes = Column(Text, nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class VocabTerm(Base):
+    """NEW (2026-09-01): admin-manageable, agent-grown catalogue of
+    task_type and evaluation_metric terms actually seen across
+    catalogued benchmarks. Serves two purposes:
+
+    1. Guidance, not enforcement: agent_runner.py fetches the active,
+       canonical terms per category and injects them into the
+       extraction prompt as a REFERENCE sample (for spelling/naming
+       consistency), not a closed enum -- Benchmark.task_type and
+       Benchmark.evaluation_metrics remain free ARRAY(Text) columns,
+       since evaluation metric names must match each paper's own
+       terminology exactly (see BenchmarkForm.tsx's existing
+       comma-separated tag input decision) and task types occasionally
+       need a genuinely new value for a novel benchmark.
+    2. Growth: after every successful extraction, agent_runner.py
+       upserts each task_type/evaluation_metric value into this table
+       (incrementing usage_count on repeats), so the reference list
+       improves automatically as the catalogue grows, without a
+       separate manual curation step required before it's useful.
+
+    category: 'task_type' | 'evaluation_metric'.
+    normalized_term: lowercased/punctuation-stripped form (same
+    normalization as agent_runner.py's _normalize_metric_name()), used
+    for the uniqueness constraint so trivial casing/punctuation
+    differences don't create duplicate rows.
+    is_canonical / canonical_term_id: lets an admin mark a term as an
+    alias of another (e.g. "ASR" -> "Attack Success Rate") via the CRUD
+    UI, without deleting the alias outright (so historical searches for
+    either spelling still resolve to the same concept).
+    source: 'agent' (auto-upserted from an extraction) or 'admin'
+    (manually added/edited), so the CRUD UI can filter to
+    recently-agent-added, unreviewed terms.
+    """
+
+    __tablename__ = "vocab_terms"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category = Column(String(20), nullable=False)
+    term = Column(String(255), nullable=False)
+    normalized_term = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_canonical = Column(Boolean, nullable=False, default=True)
+    canonical_term_id = Column(UUID(as_uuid=True), ForeignKey("vocab_terms.id"), nullable=True)
+    first_seen_benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id", ondelete="SET NULL"), nullable=True)
+    usage_count = Column(Integer, nullable=False, default=1)
+    source = Column(String(20), nullable=False, default="agent")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

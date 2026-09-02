@@ -1,14 +1,20 @@
 // Destination path: frontend/app/admin/submissions/page.tsx
 // Replaces the existing file in full.
 //
-// CHANGE (2026-08-28): the re-extract model dropdown now fetches from
-// GET /models (see backend/app/routers/models.py) instead of the
-// hardcoded PAID_MODELS array. Models are managed at /admin/models.
+// FIX (2026-09-02): same Next.js prerender failure as submit/page.tsx
+// -- useSearchParams() (from the notification-highlight fix) must be
+// wrapped in a <Suspense> boundary or `next build` fails at the
+// prerender step for this route too. All logic depending on
+// searchParams is moved into a new inner component,
+// AdminSubmissionsPageInner; the default export renders
+// <Suspense><AdminSubmissionsPageInner /></Suspense>. No behavior
+// changed otherwise.
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ModelOption,
   Submission,
@@ -39,7 +45,10 @@ function DomainCheckBadge({ passed }: { passed: boolean | null }) {
   return <span className="badge" style={{ background: "#fef3c7", color: "#92400e" }}>Borderline</span>;
 }
 
-export default function AdminSubmissionsPage() {
+function AdminSubmissionsPageInner() {
+  const searchParams = useSearchParams();
+  const highlightId = searchParams.get("highlight");
+
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [statusFilter, setStatusFilter] = useState("pending_review");
   const [loading, setLoading] = useState(true);
@@ -47,9 +56,19 @@ export default function AdminSubmissionsPage() {
   const [reextractModelById, setReextractModelById] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
+
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    if (highlightId) {
+      setStatusFilter("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightId]);
 
   async function load() {
     setLoading(true);
@@ -77,6 +96,19 @@ export default function AdminSubmissionsPage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!highlightId || loading) return;
+    const found = submissions.some((s) => s.id === highlightId);
+    if (!found) return;
+
+    setHighlightedId(highlightId);
+    const el = rowRefs.current[highlightId];
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    const timer = setTimeout(() => setHighlightedId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [highlightId, loading, submissions]);
 
   async function handleReview(id: string, decision: "approve" | "reject" | "needs_better_extraction") {
     const notes = notesById[id] || "";
@@ -141,7 +173,16 @@ export default function AdminSubmissionsPage() {
         <p style={{ color: "#666" }}>No submissions match this filter.</p>
       ) : (
         submissions.map((s) => (
-          <div key={s.id} className="card">
+          <div
+            key={s.id}
+            ref={(el) => { rowRefs.current[s.id] = el; }}
+            className="card"
+            style={
+              highlightedId === s.id
+                ? { boxShadow: "0 0 0 3px #6366f1", transition: "box-shadow 0.3s ease" }
+                : undefined
+            }
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <strong>{s.source_value}</strong>{" "}
@@ -212,5 +253,13 @@ export default function AdminSubmissionsPage() {
         ))
       )}
     </div>
+  );
+}
+
+export default function AdminSubmissionsPage() {
+  return (
+    <Suspense fallback={<div className="container"><p>Loading...</p></div>}>
+      <AdminSubmissionsPageInner />
+    </Suspense>
   );
 }

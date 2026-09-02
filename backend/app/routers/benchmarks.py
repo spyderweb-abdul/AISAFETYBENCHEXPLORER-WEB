@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.audit import log_action
+from app.core.citation_range import compute_citation_range
 from app.core.deps import get_current_user, require_admin
 from app.core.rate_limit import limiter
 from app.core.safety_dimension_classifier import classify_safety_dimensions
@@ -28,6 +29,18 @@ def _stamp_classifications(obj: Benchmark) -> None:
     at all, and BenchmarkUpdate has extra="forbid")."""
     obj.use_cases = classify_use_cases(obj.task_type, obj.description, obj.benchmark_name)
     obj.safety_dimensions = classify_safety_dimensions(obj.task_type)
+
+
+def _stamp_citation_range(obj: Benchmark) -> None:
+    """NEW (2026-09-02): recomputes citation_range from the object's
+    current cited_by, always overwriting whatever was submitted in the
+    request. Called on every create and update, mirroring
+    _stamp_classifications()'s pattern -- citation_range is a derived
+    display bucket, not independently user-settable, even though it
+    remains present in BenchmarkCreate/BenchmarkUpdate's schema for
+    backward API compatibility (any client-submitted value is simply
+    discarded and replaced here)."""
+    obj.citation_range = compute_citation_range(obj.cited_by)
 
 
 @router.get("", response_model=list[BenchmarkOut])
@@ -126,6 +139,7 @@ def create_benchmark(
 ):
     obj = Benchmark(**payload.model_dump(), created_by_user_id=current_user.id)
     _stamp_classifications(obj)
+    _stamp_citation_range(obj)
     db.add(obj)
     db.flush()
 
@@ -156,6 +170,7 @@ def update_benchmark(
         setattr(obj, field, value)
     obj.updated_by_user_id = current_user.id
     _stamp_classifications(obj)
+    _stamp_citation_range(obj)
 
     log_action(
         db, table_name="benchmarks", record_id=obj.id, action="update",

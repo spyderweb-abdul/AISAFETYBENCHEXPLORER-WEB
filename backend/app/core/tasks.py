@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 from app.core.audit import log_action
 from app.core.celery_app import celery_app
-from app.core.complexity_classifier import POPULAR_CITATION_THRESHOLD
 from app.core.config import settings
 from app.core.github_rate_limit import has_sufficient_quota
 from app.core.github_scrapper import fetch_github_stats
@@ -164,24 +163,31 @@ def _citation_search_term(benchmark: Benchmark) -> str | None:
 
 def _apply_citation_refresh(db, benchmark: Benchmark, new_count: int) -> bool:
     """Updates benchmark.cited_by and, if the new count now crosses
-    POPULAR_CITATION_THRESHOLD, promotes complexity_level to "Popular".
-    Never demotes an existing classification and never touches the
-    other (unpersisted) complexity signals -- see the module docstring
-    above for the full rationale. Returns True if the row actually
-    changed, so the caller knows whether to write an audit_log entry.
+    settings.POPULAR_CITATION_THRESHOLD, promotes complexity_level to
+    "Popular". Never demotes an existing classification and never
+    touches the other (unpersisted) complexity signals -- see the
+    module docstring above for the full rationale. Returns True if the
+    row actually changed, so the caller knows whether to write an
+    audit_log entry.
+
+    FIX (2026-09-01): reads settings.POPULAR_CITATION_THRESHOLD (live,
+    env-configurable, default 500) instead of the old hardcoded
+    complexity_classifier.POPULAR_CITATION_THRESHOLD constant, which no
+    longer exists under that name -- see the module-level comment at
+    the top of this file.
     """
     before_cited_by = benchmark.cited_by
     before_complexity_level = benchmark.complexity_level
+    threshold = settings.POPULAR_CITATION_THRESHOLD
 
     benchmark.cited_by = new_count
 
     promoted = False
-    if new_count > POPULAR_CITATION_THRESHOLD and benchmark.complexity_level != "Popular":
+    if new_count > threshold and benchmark.complexity_level != "Popular":
         benchmark.complexity_level = "Popular"
         benchmark.complexity_justification = (
             f"Popular -- citation count ({new_count}) exceeds "
-            f"{POPULAR_CITATION_THRESHOLD} (auto-updated by the weekly "
-            "citation refresh job)."
+            f"{threshold} (auto-updated by the weekly citation refresh job)."
         )
         promoted = True
 
