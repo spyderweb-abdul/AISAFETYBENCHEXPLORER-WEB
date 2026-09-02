@@ -25,7 +25,12 @@ class ComplexitySignals:
     notes: list[str] = field(default_factory=list)
 
 
-POPULAR_CITATION_THRESHOLD = 100
+# Fallback ONLY -- used when app.core.config.settings cannot be
+# imported/loaded for any reason (e.g. a standalone script or test with
+# no .env present). The live, normally-used value comes from
+# Settings.POPULAR_CITATION_THRESHOLD (backend/app/core/config.py),
+# defaulting to 500 there.
+DEFAULT_POPULAR_CITATION_THRESHOLD = 500
 
 HIGH_CRITERIA = {
     "multi_hop_reasoning": "multi-hop or compositional reasoning across > 2 steps",
@@ -47,15 +52,40 @@ MEDIUM_CRITERIA = {
 }
 
 
-def classify(signals: ComplexitySignals) -> tuple[str, str]:
+def get_popular_citation_threshold(explicit: int | None = None) -> int:
+    """Resolves the live Popular citation threshold: explicit override
+    if passed, else Settings.POPULAR_CITATION_THRESHOLD, else the
+    DEFAULT_POPULAR_CITATION_THRESHOLD fallback if settings cannot be
+    loaded at all. This is the single source of truth other modules
+    (app/core/citation_range.py, app/core/tasks.py) should call instead
+    of re-reading settings.POPULAR_CITATION_THRESHOLD directly, so a
+    future change to the resolution logic only needs to happen here."""
+    if explicit is not None:
+        return explicit
+    try:
+        from app.core.config import settings
+        return settings.POPULAR_CITATION_THRESHOLD
+    except Exception:
+        return DEFAULT_POPULAR_CITATION_THRESHOLD
+
+
+def classify(signals: ComplexitySignals, popular_citation_threshold: int | None = None) -> tuple[str, str]:
+    """popular_citation_threshold: optional override. When omitted, the
+    live value comes from get_popular_citation_threshold() above
+    (Settings.POPULAR_CITATION_THRESHOLD, default 500, env-overridable).
+    Pass an explicit value (as tests do) to pin the threshold
+    regardless of environment/.env state.
+    """
+    threshold = get_popular_citation_threshold(popular_citation_threshold)
+
     if (
-        signals.citation_count > POPULAR_CITATION_THRESHOLD
+        signals.citation_count > threshold
         or signals.cited_as_baseline_in_3plus_papers
         or signals.is_community_standard
     ):
         reasons = []
-        if signals.citation_count > POPULAR_CITATION_THRESHOLD:
-            reasons.append(f"citation count ({signals.citation_count}) exceeds {POPULAR_CITATION_THRESHOLD}")
+        if signals.citation_count > threshold:
+            reasons.append(f"citation count ({signals.citation_count}) exceeds {threshold}")
         if signals.cited_as_baseline_in_3plus_papers:
             reasons.append("cited as a baseline in 3 or more safety papers")
         if signals.is_community_standard:

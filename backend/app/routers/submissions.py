@@ -1,20 +1,16 @@
 # Destination path: backend/app/routers/submissions.py
 # Replaces the existing file in full.
 #
-# CHANGE (2026-08-28): admin re-extraction now UPDATES the benchmark
-# already linked to a submission instead of creating a new benchmark
-# row and marking the old one "rejected". This closes the gap where
-# re-processing the same paper through the admin extraction pipeline
-# produced a second, duplicate catalogue entry instead of refreshing
-# the one already under review.
+# CHANGE (2026-09-01): same notification link fix as
+# submission_runner.py -- review_submission()'s and
+# _run_reextraction_background()'s notify_user/notify_admins calls now
+# use query-param deep links (/submit?highlight={id},
+# /admin/submissions?highlight={id}) instead of a bare "/submit" or a
+# nonexistent per-id path segment. See the updated
+# admin/submissions/page.tsx and submit/page.tsx for the read side.
 #
-# _run_reextraction_background() now passes reuse_benchmark_id=
-# superseded_benchmark_id into run_extraction() (see agent_runner.py's
-# matching patch), so the same Benchmark.id is updated in place. The
-# "supersede and reject the old benchmark" branch has been removed;
-# there is no longer an "old" benchmark distinct from the "new" one --
-# there is exactly one benchmark row for this submission, updated
-# in place, with full audit-log history captured by the update path.
+# All other logic (the reuse_benchmark_id wiring from the prior
+# session's duplicate-benchmark fix) is unchanged.
 
 from __future__ import annotations
 
@@ -52,13 +48,6 @@ def create_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_researcher),
 ):
-    """Researcher-only (see require_researcher -- admins are
-    structurally excluded, not just discouraged). Runs the extraction
-    inline via BackgroundTasks, mirroring the existing admin Agent
-    Extraction Panel's dispatch pattern in app/routers/extraction.py --
-    see submission_runner.py for the full domain-check/quality-gate/
-    notification workflow this triggers.
-    """
     duplicate_reason = _find_duplicate(db, payload.source_value)
     if duplicate_reason:
         raise HTTPException(status_code=409, detail=duplicate_reason)
@@ -221,7 +210,7 @@ def review_submission(
         db, submission.submitter_user_id, notify_type,
         title="Update on your benchmark submission",
         body=notify_body,
-        link_path="/submit",
+        link_path=f"/submit?highlight={submission.id}",
     )
     db.commit()
     db.refresh(submission)
@@ -257,7 +246,7 @@ def _run_reextraction_background(submission_id: uuid.UUID, job_id: uuid.UUID, su
             db, submission.submitter_user_id, "submission_failed_extraction",
             title="Re-extraction of your benchmark submission failed",
             body=f"The requested higher-quality re-extraction failed. Reason: {job.failure_reason or 'Unknown.'}",
-            link_path="/submit",
+            link_path=f"/submit?highlight={submission.id}",
         )
         db.commit()
         return
@@ -275,7 +264,7 @@ def _run_reextraction_background(submission_id: uuid.UUID, job_id: uuid.UUID, su
         db, "submission_queued_for_review",
         title=f"Re-extraction ready for review: {benchmark.benchmark_name}",
         body=f"Re-extracted with {job.model_used} at the reviewing admin's request. Quality score: {job.quality_score}.",
-        link_path=f"/admin/submissions/{submission.id}",
+        link_path=f"/admin/submissions?highlight={submission.id}",
     )
     db.commit()
 
@@ -324,4 +313,3 @@ def reextract_submission(
     )
     db.refresh(submission)
     return submission
-

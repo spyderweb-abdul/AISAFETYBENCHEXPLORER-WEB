@@ -1,9 +1,15 @@
 // Destination path: frontend/components/AppHeader.tsx
-// Replaces the existing file in full. (Supersedes the earlier draft:
-// only change is adding a Link to /admin/extraction in the
-// admin-only nav section, alongside Benchmarks and Community
-// Submissions. No other logic changed -- role fetching, logout,
-// and the researcher-only Submit link are unchanged.)
+// Replaces the existing file in full.
+//
+// CHANGE (2026-09-01): added persistent admin nav links for
+// /admin/models (model catalogue CRUD) and /admin/vocab (task type /
+// evaluation metric catalogue CRUD), alongside the existing
+// Benchmarks, Agent Extraction, and Community Submissions links. Both
+// pages previously only had ad-hoc "Manage models ->" / no link at all
+// scattered inline on individual pages -- they're now reachable from
+// every admin page via this shared header, matching how every other
+// admin section is exposed. No other logic changed -- role fetching,
+// logout, and the researcher-only Submit link are unchanged.
 
 "use client";
 
@@ -56,6 +62,8 @@ export default function AppHeader() {
             <Link href="/admin/benchmarks">Benchmarks</Link>
             <Link href="/admin/extraction">Agent Extraction</Link>
             <Link href="/admin/submissions">Community Submissions</Link>
+            <Link href="/admin/models">Models</Link>
+            <Link href="/admin/vocab">Vocabulary</Link>
           </>
         )}
         {user?.role === "researcher" && <Link href="/submit">Submit a Benchmark</Link>}

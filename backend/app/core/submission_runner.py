@@ -1,34 +1,3 @@
-# Destination path: backend/app/core/submission_runner.py
-# New file.
-#
-# Phase 6 item 4: orchestrates the gated community submission workflow
-# around the existing, UNMODIFIED agent_runner.run_extraction(). This
-# module intentionally does not touch agent_runner.py at all -- that
-# file is large enough that a blind edit risks breaking extraction for
-# the admin-facing Agent Extraction Panel too. Instead this wraps the
-# same function the admin panel already calls, with community-specific
-# guardrails layered around it:
-#
-# 1. Pre-flight duplicate check: skip re-running extraction entirely
-#    (saving a model call) if this exact source_value already has a
-#    non-failed/non-rejected Submission, or an existing published/
-#    pending_review Benchmark with a matching paper_link.
-# 2. Pre-flight abuse guard: blocks new submissions from a user whose
-#    last MAX_CONSECUTIVE_REJECTIONS submissions were all rejected/
-#    failed, until one of their submissions is approved (self-clearing)
-#    or an admin intervenes.
-# 3. Forces model_used to settings.COMMUNITY_SUBMISSION_MODEL
-#    regardless of anything a client could send, so a community
-#    submission can never consume paid OpenAI/Anthropic budget or
-#    trigger the paid-tier Ollama Cloud models blocked in Known Gap 17.
-# 4. Post-extraction: runs check_domain_relevance() against the
-#    result, stamps Benchmark.submission_source="community" and
-#    Benchmark.submitted_by_user_id, applies the quality-score floor,
-#    and routes the Submission to pending_review (admin notified) or
-#    an immediate, reason-carrying auto-rejection (submitter notified)
-#    -- never silently drops a submission with no explanation either
-#    way.
-
 from __future__ import annotations
 
 import logging
@@ -164,10 +133,6 @@ def submit_community_extraction(
     submission.status = "extracting"
     db.commit()
 
-    # Reuses agent_runner.py's run_extraction() completely unmodified --
-    # same function the admin Agent Extraction Panel calls. Community
-    # jobs are distinguished purely by model_used and by this wrapper's
-    # pre/post-processing, not by any code path inside agent_runner.py.
     run_extraction(
         job_id=job.id,
         source_type=source_type,
@@ -196,7 +161,7 @@ def submit_community_extraction(
                 f"Reason: {job.failure_reason or 'Unknown extraction failure.'} "
                 "You can try resubmitting, or contact an admin if this persists."
             ),
-            link_path=f"/submit",
+            link_path=f"/submit?highlight={submission.id}",
         )
         db.commit()
         return submission
@@ -234,7 +199,7 @@ def submit_community_extraction(
                 "please contact an admin with more context, or try resubmitting "
                 "with a more precise DOI/arXiv ID."
             ),
-            link_path=f"/submit",
+            link_path=f"/submit?highlight={submission.id}",
         )
     else:
         submission.status = "pending_review"
@@ -248,7 +213,7 @@ def submit_community_extraction(
                 f"Domain check: {'passed' if domain_passed else 'borderline' if domain_passed is None else 'failed'} "
                 f"-- {domain_reason}"
             ),
-            link_path=f"/admin/submissions/{submission.id}",
+            link_path=f"/admin/submissions?highlight={submission.id}",
         )
 
     db.commit()

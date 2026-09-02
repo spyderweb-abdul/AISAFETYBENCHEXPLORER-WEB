@@ -1,12 +1,3 @@
-# Destination path: backend/app/schemas/model_catalog.py
-# New file.
-#
-# Schemas for the admin-manageable ModelOption catalogue (see
-# app/models/orm.py's ModelOption). Kept in its own file rather than
-# appended to benchmark.py/submission.py since it is unrelated to the
-# benchmark/submission domain -- this is platform configuration, not
-# catalogue data.
-
 from __future__ import annotations
 
 import uuid
