@@ -12,46 +12,47 @@ import {
   listVocabTerms,
 } from "../../lib/api";
 import ComplexityBadge from "../../components/ComplexityBadge";
-import EvaluationMetricsCell from "../../components/EvaluationMetricsCell";
-
-function displayValue(value: string | null | undefined) {
-  return value?.trim() || "Not specified";
-}
-
-function formatReleaseDate(value: string | null) {
-  if (!value) return "Not specified";
-
-  const date = new Date(`${value}T00:00:00`);
-
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat("en", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(date);
-}
 
 function RepositoryLink({
-  href,
+  url,
   label,
 }: {
-  href: string | null;
+  url: string | null;
   label: string;
 }) {
-  if (!href) {
-    return <span className="browse-single-line">Not specified</span>;
+  if (!url) {
+    return (
+      <span
+        className="browse-link-unavailable"
+        aria-label={`No ${label.toLowerCase()} available`}
+        title={`No ${label.toLowerCase()} available`}
+      >
+        x
+      </span>
+    );
   }
 
   return (
     <a
       className="browse-repository-link"
-      href={href}
+      href={url}
       target="_blank"
       rel="noreferrer"
-      title={href}
+      aria-label={`Open ${label}`}
+      title={`Open ${label}`}
     >
-      {label}
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M10 13a5 5 0 0 0 7.07.07l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.07-.07l-3 3A5 5 0 0 0 11 21l1.71-1.71" />
+      </svg>
     </a>
   );
 }
@@ -62,9 +63,6 @@ export default function BrowsePage() {
   const [taskTypeOptions, setTaskTypeOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedMetricCells, setExpandedMetricCells] = useState<Set<string>>(
-    () => new Set(),
-  );
 
   const [search, setSearch] = useState("");
   const [taskType, setTaskType] = useState("");
@@ -103,33 +101,17 @@ export default function BrowsePage() {
     }
   }
 
-  function setMetricCellExpanded(cellKey: string, expanded: boolean) {
-    setExpandedMetricCells((current) => {
-      const next = new Set(current);
-
-      if (expanded) {
-        next.add(cellKey);
-      } else {
-        next.delete(cellKey);
-      }
-
-      return next;
-    });
-  }
-
   useEffect(() => {
     fetchVocab().then(setVocab).catch(() => setVocab(null));
   }, []);
 
   useEffect(() => {
     listVocabTerms({ category: "task_type", active_only: true })
-      .then((terms) =>
+      .then((terms) => {
         setTaskTypeOptions(
-          terms
-            .map((term) => term.term)
-            .sort((a, b) => a.localeCompare(b)),
-        ),
-      )
+          terms.map((term) => term.term).sort((a, b) => a.localeCompare(b)),
+        );
+      })
       .catch(() => setTaskTypeOptions([]));
   }, []);
 
@@ -148,17 +130,12 @@ export default function BrowsePage() {
   ]);
 
   return (
-    <div className="container">
+    <div className="container browse-container">
       <div className="topbar">
-        <h1 style={{ margin: 0 }}>
-          AISafetyBenchExplorer -- Browse Benchmarks
-        </h1>
-
+        <h1 style={{ margin: 0 }}>AISafetyBenchExplorer - Browse Benchmarks</h1>
         <div style={{ display: "flex", gap: 8 }}>
           <Link href="/browse/heatmap">
-            <button className="secondary">
-              View Research Gap Heatmap
-            </button>
+            <button className="secondary">View Research Gap Heatmap</button>
           </Link>
         </div>
       </div>
@@ -175,10 +152,7 @@ export default function BrowsePage() {
         {benchmarks.length === 1 ? "" : "s"} shown.
       </p>
 
-      <div
-        className="card"
-        style={{ display: "flex", gap: 12, flexWrap: "wrap" }}
-      >
+      <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <input
           placeholder="Search by name..."
           value={search}
@@ -186,10 +160,7 @@ export default function BrowsePage() {
           style={{ minWidth: 200 }}
         />
 
-        <select
-          value={taskType}
-          onChange={(event) => setTaskType(event.target.value)}
-        >
+        <select value={taskType} onChange={(event) => setTaskType(event.target.value)}>
           <option value="">All task types</option>
           {taskTypeOptions.map((term) => (
             <option key={term} value={term}>
@@ -198,14 +169,11 @@ export default function BrowsePage() {
           ))}
         </select>
 
-        <select
-          value={useCase}
-          onChange={(event) => setUseCase(event.target.value)}
-        >
+        <select value={useCase} onChange={(event) => setUseCase(event.target.value)}>
           <option value="">All use cases</option>
-          {(vocab?.use_cases ?? []).map((term) => (
-            <option key={term} value={term}>
-              {term}
+          {(vocab?.use_cases ?? []).map((item) => (
+            <option key={item} value={item}>
+              {item}
             </option>
           ))}
         </select>
@@ -215,17 +183,15 @@ export default function BrowsePage() {
           onChange={(event) => setComplexity(event.target.value)}
         >
           <option value="">All complexity levels</option>
-          {(
-            vocab?.complexity_level ?? [
-              "Popular",
-              "High",
-              "Medium",
-              "Low",
-              "Unknown",
-            ]
-          ).map((term) => (
-            <option key={term} value={term}>
-              {term}
+          {(vocab?.complexity_level ?? [
+            "Popular",
+            "High",
+            "Medium",
+            "Low",
+            "Unknown",
+          ]).map((item) => (
+            <option key={item} value={item}>
+              {item}
             </option>
           ))}
         </select>
@@ -235,9 +201,9 @@ export default function BrowsePage() {
           onChange={(event) => setLanguageSupport(event.target.value)}
         >
           <option value="">All languages</option>
-          {(vocab?.language_support ?? []).map((term) => (
-            <option key={term} value={term}>
-              {term}
+          {(vocab?.language_support ?? []).map((item) => (
+            <option key={item} value={item}>
+              {item}
             </option>
           ))}
         </select>
@@ -284,18 +250,13 @@ export default function BrowsePage() {
         </label>
       </div>
 
-      <div
-        className="card"
-        style={{ display: "flex", gap: 12, alignItems: "center" }}
-      >
+      <div className="card" style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <span style={{ fontSize: 13, color: "#666" }}>
           Export published benchmarks:
         </span>
-
         <a href={exportPublicXlsxUrl()}>
           <button className="secondary">Download Excel (.xlsx)</button>
         </a>
-
         <a href={exportPublicCsvUrl()}>
           <button className="secondary">Download CSV</button>
         </a>
@@ -307,9 +268,7 @@ export default function BrowsePage() {
         ) : error ? (
           <p className="error">{error}</p>
         ) : benchmarks.length === 0 ? (
-          <p style={{ color: "#666" }}>
-            No benchmarks match these filters.
-          </p>
+          <p style={{ color: "#666" }}>No benchmarks match these filters.</p>
         ) : (
           <div className="browse-table-scroll">
             <table className="browse-table">
@@ -319,93 +278,61 @@ export default function BrowsePage() {
                   <th>Task Type</th>
                   <th>Use Case</th>
                   <th>Complexity</th>
-                  <th>License</th>
                   <th>Release Date</th>
                   <th>Code</th>
-                  <th>Code Repository</th>
-                  <th>Dataset Repository</th>
+                  <th>Dataset</th>
+                  <th>No. of Samples</th>
+                  <th>Created By</th>
+                  <th>Entry Modalities</th>
+                  <th>Dev Purpose</th>
                   <th>Evaluation Metrics</th>
+                  <th>Language Support</th>
+                  <th>Integration Option</th>
+                  <th>License</th>
                   <th>Cited By</th>
                 </tr>
               </thead>
 
               <tbody>
-                {benchmarks.map((benchmark) => {
-                  const metricCellKey = `${benchmark.id}:evaluation_metrics`;
-
-                  return (
-                    <tr key={benchmark.id}>
-                      <td className="browse-name-cell">
-                        <Link href={`/browse/${benchmark.id}`}>
-                          {benchmark.benchmark_name}
-                        </Link>
-                      </td>
-
-                      <td
-                        className="browse-single-line"
-                        title={benchmark.task_type.join(", ")}
-                      >
-                        {benchmark.task_type.join(", ") || "Not specified"}
-                      </td>
-
-                      <td
-                        className="browse-single-line"
-                        title={benchmark.use_cases.join(", ")}
-                      >
-                        {benchmark.use_cases.join(", ") || "Not specified"}
-                      </td>
-
-                      <td>
-                        <ComplexityBadge
-                          level={benchmark.complexity_level}
-                          justification={benchmark.complexity_justification}
-                        />
-                      </td>
-
-                      <td
-                        className="browse-single-line"
-                        title={displayValue(benchmark.license)}
-                      >
-                        {displayValue(benchmark.license)}
-                      </td>
-
-                      <td className="browse-single-line">
-                        {formatReleaseDate(benchmark.release_date)}
-                      </td>
-
-                      <td className="browse-single-line">
-                        {benchmark.code_dataset}
-                      </td>
-
-                      <td>
-                        <RepositoryLink
-                          href={benchmark.code_repository}
-                          label="Code repository"
-                        />
-                      </td>
-
-                      <td>
-                        <RepositoryLink
-                          href={benchmark.dataset_repository}
-                          label="Dataset repository"
-                        />
-                      </td>
-
-                      <td className="evaluation-metrics-column">
-                        <EvaluationMetricsCell
-                          cellKey={metricCellKey}
-                          values={benchmark.evaluation_metrics}
-                          expanded={expandedMetricCells.has(metricCellKey)}
-                          onExpandedChange={setMetricCellExpanded}
-                        />
-                      </td>
-
-                      <td className="browse-citations-cell">
-                        {benchmark.cited_by}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {benchmarks.map((benchmark) => (
+                  <tr key={benchmark.id}>
+                    <td className="browse-name-cell">
+                      <Link href={`/browse/${benchmark.id}`}>
+                        {benchmark.benchmark_name}
+                      </Link>
+                    </td>
+                    <td>{benchmark.task_type.join(", ") || "-"}</td>
+                    <td>{benchmark.use_cases?.join(", ") || "-"}</td>
+                    <td>
+                      <ComplexityBadge
+                        level={benchmark.complexity_level}
+                        justification={benchmark.complexity_justification}
+                      />
+                    </td>
+                    <td>{benchmark.release_date ?? "-"}</td>
+                    <td>
+                      <RepositoryLink
+                        url={benchmark.code_repository}
+                        label={`${benchmark.benchmark_name} code repository`}
+                      />
+                    </td>
+                    <td>
+                      <RepositoryLink
+                        url={benchmark.dataset_repository}
+                        label={`${benchmark.benchmark_name} dataset repository`}
+                      />
+                    </td>
+                    <td>{benchmark.no_of_samples ?? "-"}</td>
+                    <td>{benchmark.created_by ?? "-"}</td>
+                    <td>{benchmark.entry_modalities.join(", ") || "-"}</td>
+                    <td>{benchmark.dev_purpose ?? "-"}</td>
+                    <td>{benchmark.evaluation_metrics.join(", ") || "-"}</td>
+                    <td>{benchmark.language_support.join(", ") || "-"}</td>
+                    <td>{benchmark.integration_option ?? "-"}</td>
+                    <td>{benchmark.license ?? "-"}</td>
+                    <td>{benchmark.cited_by}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

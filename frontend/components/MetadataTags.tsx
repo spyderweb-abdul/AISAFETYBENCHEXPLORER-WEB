@@ -16,27 +16,23 @@ const TAG_PALETTE = [
 const BORDER_STYLES = ["solid", "dashed", "dotted", "double"] as const;
 const MAX_COLLAPSED_ROWS = 2;
 
+function normalizeValue(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
 function hashValue(value: string, seed = 0) {
   let hash = 2166136261 ^ seed;
-
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
     hash = Math.imul(hash, 16777619);
   }
-
   return hash >>> 0;
 }
 
-function getTagStyle(value: string) {
-  const normalized = value.trim().toLocaleLowerCase();
-
-  const palette =
-    TAG_PALETTE[hashValue(normalized) % TAG_PALETTE.length];
-
-  const borderStyle =
-    BORDER_STYLES[
-      hashValue(normalized, 97) % BORDER_STYLES.length
-    ];
+function tagStyle(value: string) {
+  const normalized = normalizeValue(value);
+  const palette = TAG_PALETTE[hashValue(normalized) % TAG_PALETTE.length];
+  const borderStyle = BORDER_STYLES[hashValue(normalized, 97) % BORDER_STYLES.length];
 
   return {
     backgroundColor: palette.background,
@@ -60,16 +56,9 @@ export default function MetadataTags({
   onExpandedChange,
 }: MetadataTagsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const [visibleCount, setVisibleCount] = useState(
-    values?.length ?? 0,
-  );
-
+  const [visibleCount, setVisibleCount] = useState(values?.length ?? 0);
   const tagValues = useMemo(
-    () =>
-      (values ?? [])
-        .map((value) => value.trim())
-        .filter(Boolean),
+    () => (values ?? []).map((value) => value.trim()).filter(Boolean),
     [values],
   );
 
@@ -81,25 +70,17 @@ export default function MetadataTags({
 
     const updateVisibleCount = () => {
       const container = containerRef.current;
-
       if (!container) return;
 
-      const tags = Array.from(
-        container.querySelectorAll<HTMLElement>(
-          "[data-metadata-tag]",
-        ),
-      );
+      const tags = Array.from(container.querySelectorAll<HTMLElement>("[data-metadata-tag]"));
+      if (tags.length === 0) return;
 
       const rowStarts: number[] = [];
       let count = tags.length;
 
       for (let index = 0; index < tags.length; index += 1) {
         const rowTop = Math.round(tags[index].offsetTop);
-
-        if (!rowStarts.includes(rowTop)) {
-          rowStarts.push(rowTop);
-        }
-
+        if (!rowStarts.includes(rowTop)) rowStarts.push(rowTop);
         if (rowStarts.length > MAX_COLLAPSED_ROWS) {
           count = index;
           break;
@@ -110,15 +91,11 @@ export default function MetadataTags({
     };
 
     const frame = window.requestAnimationFrame(updateVisibleCount);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateVisibleCount);
 
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(updateVisibleCount);
-
-    if (containerRef.current && observer) {
-      observer.observe(containerRef.current);
-    }
+    if (containerRef.current && observer) observer.observe(containerRef.current);
 
     return () => {
       window.cancelAnimationFrame(frame);
@@ -130,11 +107,8 @@ export default function MetadataTags({
     return <span className="metadata-tags-empty">Not specified</span>;
   }
 
-  const displayedValues = expanded
-    ? tagValues
-    : tagValues.slice(0, visibleCount);
-
-  const hiddenCount = tagValues.length - displayedValues.length;
+  const displayedValues = expanded ? tagValues : tagValues.slice(0, visibleCount);
+  const hiddenCount = Math.max(tagValues.length - displayedValues.length, 0);
 
   return (
     <div className="metadata-tags-cell">
@@ -144,14 +118,13 @@ export default function MetadataTags({
             className="metadata-tag"
             data-metadata-tag
             key={`${value}-${index}`}
-            style={getTagStyle(value)}
+            style={tagStyle(value)}
             title={value}
           >
             {value}
           </span>
         ))}
       </div>
-
       {!expanded && hiddenCount > 0 && (
         <button
           className="metadata-tags-toggle"
@@ -161,7 +134,6 @@ export default function MetadataTags({
           +{hiddenCount} more
         </button>
       )}
-
       {expanded && tagValues.length > 1 && (
         <button
           className="metadata-tags-toggle"
