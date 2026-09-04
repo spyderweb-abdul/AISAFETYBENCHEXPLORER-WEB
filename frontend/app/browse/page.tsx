@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Benchmark,
@@ -12,6 +12,8 @@ import {
   listVocabTerms,
 } from "../../lib/api";
 import ComplexityBadge from "../../components/ComplexityBadge";
+import MetadataTags, { MetadataTag,} from "../../components/MetadataTags";
+
 
 function RepositoryLink({
   url,
@@ -27,7 +29,7 @@ function RepositoryLink({
         aria-label={`No ${label.toLowerCase()} available`}
         title={`No ${label.toLowerCase()} available`}
       >
-        x
+        Not available
       </span>
     );
   }
@@ -38,8 +40,8 @@ function RepositoryLink({
       href={url}
       target="_blank"
       rel="noreferrer"
-      aria-label={`Open ${label}`}
-      title={`Open ${label}`}
+      aria-label={`Open ${label} in a new tab`}
+      title={`Open ${label} in a new tab`}
     >
       <svg
         aria-hidden="true"
@@ -53,6 +55,7 @@ function RepositoryLink({
         <path d="M10 13a5 5 0 0 0 7.07.07l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
         <path d="M14 11a5 5 0 0 0-7.07-.07l-3 3A5 5 0 0 0 11 21l1.71-1.71" />
       </svg>
+      <span className="sr-only">{label}</span>
     </a>
   );
 }
@@ -72,6 +75,32 @@ export default function BrowsePage() {
   const [languageSupport, setLanguageSupport] = useState("");
   const [releaseDateFrom, setReleaseDateFrom] = useState("");
   const [releaseDateTo, setReleaseDateTo] = useState("");
+
+  const [expandedTagCells, setExpandedTagCells] = useState<Record<string, boolean>>({});
+
+  const hasActiveFilters = useMemo(
+    () =>
+      Boolean(
+        search ||
+          taskType ||
+          useCase ||
+          complexity ||
+          license ||
+          languageSupport ||
+          releaseDateFrom ||
+          releaseDateTo,
+      ),
+    [
+      complexity,
+      languageSupport,
+      license,
+      releaseDateFrom,
+      releaseDateTo,
+      search,
+      taskType,
+      useCase,
+    ],
+  );
 
   async function load() {
     setLoading(true);
@@ -95,10 +124,21 @@ export default function BrowsePage() {
       const data = await listBenchmarks(params);
       setBenchmarks(data);
     } catch {
-      setError("Failed to load benchmarks.");
+      setError("The benchmark catalogue could not be loaded.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function clearFilters() {
+    setSearch("");
+    setTaskType("");
+    setUseCase("");
+    setComplexity("");
+    setLicense("");
+    setLanguageSupport("");
+    setReleaseDateFrom("");
+    setReleaseDateTo("");
   }
 
   useEffect(() => {
@@ -129,180 +169,244 @@ export default function BrowsePage() {
     releaseDateTo,
   ]);
 
+  function handleExpandedTagCell(cellKey: string, expanded: boolean) {
+    setExpandedTagCells((current) => ({
+      ...current,
+      [cellKey]: expanded,
+    }));
+  }
+
   return (
-    <div className="container browse-container">
-      <div className="topbar">
-        <h1 style={{ margin: 0 }}>AISafetyBenchExplorer - Browse Benchmarks</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Link href="/browse/heatmap">
-            <button className="secondary">View Research Gap Heatmap</button>
-          </Link>
+    <main className="container browse-container">
+      <header className="browse-page-header">
+        <div>
+          <p className="eyebrow">Public catalogue</p>
+          <h1>AISafetyBenchExplorer</h1>
+          <p className="browse-page-description">
+            Explore published AI safety evaluation benchmarks and their metadata.
+          </p>
         </div>
-      </div>
 
-      <p
-        style={{
-          color: "#666",
-          fontSize: 13,
-          marginTop: -8,
-          marginBottom: 20,
-        }}
-      >
-        {benchmarks.length} published benchmark
-        {benchmarks.length === 1 ? "" : "s"} shown.
-      </p>
+        <Link className="button secondary browse-heatmap-link" href="/browse/heatmap">
+          View research gap heatmap
+        </Link>
+      </header>
 
-      <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <input
-          placeholder="Search by name..."
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          style={{ minWidth: 200 }}
-        />
+      <section className="browse-filter-panel" aria-labelledby="browse-filters-heading">
+        <div className="browse-section-heading">
+          <div>
+            <h2 id="browse-filters-heading">Filter benchmarks</h2>
+            <p>Results update as filters change.</p>
+          </div>
 
-        <select value={taskType} onChange={(event) => setTaskType(event.target.value)}>
-          <option value="">All task types</option>
-          {taskTypeOptions.map((term) => (
-            <option key={term} value={term}>
-              {term}
-            </option>
-          ))}
-        </select>
+          {hasActiveFilters && (
+            <button className="text-button" type="button" onClick={clearFilters}>
+              Clear all filters
+            </button>
+          )}
+        </div>
 
-        <select value={useCase} onChange={(event) => setUseCase(event.target.value)}>
-          <option value="">All use cases</option>
-          {(vocab?.use_cases ?? []).map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
+        <div className="browse-filter-grid">
+          <label className="browse-filter browse-filter-search">
+            <span>Search</span>
+            <input
+              placeholder="Benchmark name"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
 
-        <select
-          value={complexity}
-          onChange={(event) => setComplexity(event.target.value)}
-        >
-          <option value="">All complexity levels</option>
-          {(vocab?.complexity_level ?? [
-            "Popular",
-            "High",
-            "Medium",
-            "Low",
-            "Unknown",
-          ]).map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
+          <label className="browse-filter">
+            <span>Task type</span>
+            <select value={taskType} onChange={(event) => setTaskType(event.target.value)}>
+              <option value="">All task types</option>
+              {taskTypeOptions.map((term) => (
+                <option key={term} value={term}>
+                  {term}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <select
-          value={languageSupport}
-          onChange={(event) => setLanguageSupport(event.target.value)}
-        >
-          <option value="">All languages</option>
-          {(vocab?.language_support ?? []).map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
+          <label className="browse-filter">
+            <span>Use case</span>
+            <select value={useCase} onChange={(event) => setUseCase(event.target.value)}>
+              <option value="">All use cases</option>
+              {(vocab?.use_cases ?? []).map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <input
-          placeholder="Filter by license..."
-          value={license}
-          onChange={(event) => setLicense(event.target.value)}
-          style={{ minWidth: 160 }}
-        />
+          <label className="browse-filter">
+            <span>Complexity level</span>
+            <select
+              value={complexity}
+              onChange={(event) => setComplexity(event.target.value)}
+            >
+              <option value="">All complexity levels</option>
+              {(vocab?.complexity_level ?? [
+                "Popular",
+                "High",
+                "Medium",
+                "Low",
+                "Unknown",
+              ]).map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 13,
-            color: "#666",
-          }}
-        >
-          Released from
-          <input
-            type="date"
-            value={releaseDateFrom}
-            onChange={(event) => setReleaseDateFrom(event.target.value)}
-          />
-        </label>
+          <label className="browse-filter">
+            <span>Language support</span>
+            <select
+              value={languageSupport}
+              onChange={(event) => setLanguageSupport(event.target.value)}
+            >
+              <option value="">All languages</option>
+              {(vocab?.language_support ?? []).map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 13,
-            color: "#666",
-          }}
-        >
-          to
-          <input
-            type="date"
-            value={releaseDateTo}
-            onChange={(event) => setReleaseDateTo(event.target.value)}
-          />
-        </label>
-      </div>
+          <label className="browse-filter">
+            <span>License</span>
+            <input
+              placeholder="License name"
+              value={license}
+              onChange={(event) => setLicense(event.target.value)}
+            />
+          </label>
 
-      <div className="card" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <span style={{ fontSize: 13, color: "#666" }}>
-          Export published benchmarks:
-        </span>
-        <a href={exportPublicXlsxUrl()}>
-          <button className="secondary">Download Excel (.xlsx)</button>
-        </a>
-        <a href={exportPublicCsvUrl()}>
-          <button className="secondary">Download CSV</button>
-        </a>
-      </div>
+          <label className="browse-filter">
+            <span>Released from</span>
+            <input
+              type="date"
+              value={releaseDateFrom}
+              onChange={(event) => setReleaseDateFrom(event.target.value)}
+            />
+          </label>
 
-      <div className="card browse-table-card">
+          <label className="browse-filter">
+            <span>Released to</span>
+            <input
+              type="date"
+              value={releaseDateTo}
+              onChange={(event) => setReleaseDateTo(event.target.value)}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="browse-results-toolbar" aria-label="Catalogue actions">
+        <div aria-live="polite" aria-atomic="true">
+          <strong>{loading ? "Updating results" : `${benchmarks.length} benchmarks`}</strong>
+          <span>
+            {loading
+              ? " matching the current filters."
+              : hasActiveFilters
+                ? " match the current filters."
+                : " currently shown."}
+          </span>
+        </div>
+
+        <div className="browse-export-actions">
+          <span>Export published catalogue</span>
+          <a className="button secondary" href={exportPublicXlsxUrl()}>
+            Excel
+          </a>
+          <a className="button secondary" href={exportPublicCsvUrl()}>
+            CSV
+          </a>
+        </div>
+      </section>
+
+      <section className="browse-table-card" aria-labelledby="browse-results-heading">
+        <div className="browse-table-heading">
+          <div>
+            <h2 id="browse-results-heading">Benchmark records</h2>
+            <p>Scroll horizontally to inspect all metadata fields.</p>
+          </div>
+        </div>
+
         {loading ? (
-          <p>Loading...</p>
+          <div className="browse-state" role="status" aria-live="polite">
+            <span className="browse-loading-indicator" aria-hidden="true" />
+            Loading benchmark records.
+          </div>
         ) : error ? (
-          <p className="error">{error}</p>
+          <div className="browse-state browse-state-error" role="alert">
+            <p>{error}</p>
+            <button className="secondary" type="button" onClick={load}>
+              Try again
+            </button>
+          </div>
         ) : benchmarks.length === 0 ? (
-          <p style={{ color: "#666" }}>No benchmarks match these filters.</p>
+          <div className="browse-state">
+            <p>No published benchmarks match the current filters.</p>
+            {hasActiveFilters && (
+              <button className="secondary" type="button" onClick={clearFilters}>
+                Clear filters
+              </button>
+            )}
+          </div>
         ) : (
-          <div className="browse-table-scroll">
+          <div className="browse-table-scroll" tabIndex={0} aria-label="Benchmark results table">
             <table className="browse-table">
+              <caption className="sr-only">
+                Published AI safety benchmarks and their metadata
+              </caption>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Task Type</th>
-                  <th>Use Case</th>
-                  <th>Complexity</th>
-                  <th>Release Date</th>
-                  <th>Code</th>
-                  <th>Dataset</th>
-                  <th>No. of Samples</th>
-                  <th>Created By</th>
-                  <th>Entry Modalities</th>
-                  <th>Dev Purpose</th>
-                  <th>Evaluation Metrics</th>
-                  <th>Language Support</th>
-                  <th>Integration Option</th>
-                  <th>License</th>
-                  <th>Cited By</th>
+                  <th scope="col">Name</th>
+                  <th scope="col">Task Type</th>
+                  <th scope="col">Use Case</th>
+                  <th scope="col">Complexity</th>
+                  <th scope="col">Release Date</th>
+                  <th scope="col">Code</th>
+                  <th scope="col">Dataset</th>
+                  <th scope="col">Created By</th>
+                  <th scope="col">Entry Modalities</th>
+                  <th scope="col">Dev Purpose</th>
+                  <th scope="col">Evaluation Metrics</th>
+                  <th scope="col">Language Support</th>
+                  <th scope="col">Integration Option</th>
+                  <th scope="col">License</th>
+                  <th scope="col">Cited By</th>
                 </tr>
               </thead>
 
               <tbody>
                 {benchmarks.map((benchmark) => (
                   <tr key={benchmark.id}>
-                    <td className="browse-name-cell">
+                    <th scope="row" className="browse-name-cell">
                       <Link href={`/browse/${benchmark.id}`}>
                         {benchmark.benchmark_name}
                       </Link>
+                    </th>
+                    <td>
+                      <MetadataTags
+                        cellKey={`${benchmark.id}-task-type`}
+                        values={benchmark.task_type}
+                        expanded={expandedTagCells[`${benchmark.id}-task-type`] ?? false}
+                        onExpandedChange={handleExpandedTagCell}
+                      />
                     </td>
-                    <td>{benchmark.task_type.join(", ") || "-"}</td>
-                    <td>{benchmark.use_cases?.join(", ") || "-"}</td>
+                    <td>
+                      <MetadataTags
+                        cellKey={`${benchmark.id}-use-cases`}
+                        values={benchmark.use_cases}
+                        expanded={expandedTagCells[`${benchmark.id}-use-cases`] ?? false}
+                        onExpandedChange={handleExpandedTagCell}
+                      />
+                    </td>
                     <td>
                       <ComplexityBadge
                         level={benchmark.complexity_level}
@@ -322,14 +426,35 @@ export default function BrowsePage() {
                         label={`${benchmark.benchmark_name} dataset repository`}
                       />
                     </td>
-                    <td>{benchmark.no_of_samples ?? "-"}</td>
-                    <td>{benchmark.created_by ?? "-"}</td>
-                    <td>{benchmark.entry_modalities.join(", ") || "-"}</td>
-                    <td>{benchmark.dev_purpose ?? "-"}</td>
-                    <td>{benchmark.evaluation_metrics.join(", ") || "-"}</td>
-                    <td>{benchmark.language_support.join(", ") || "-"}</td>
-                    <td>{benchmark.integration_option ?? "-"}</td>
-                    <td>{benchmark.license ?? "-"}</td>
+                    
+                    <td> <MetadataTag value={benchmark.created_by} /></td>
+                    <td>
+                      <MetadataTags
+                        cellKey={`${benchmark.id}-entry-modalities`}
+                        values={benchmark.entry_modalities}
+                        expanded={expandedTagCells[`${benchmark.id}-entry-modalities`] ?? false}
+                        onExpandedChange={handleExpandedTagCell}
+                      />
+                    </td>
+                    <td> <MetadataTag value={benchmark.dev_purpose} /></td>
+                    <td>
+                      <MetadataTags
+                        cellKey={`${benchmark.id}-evaluation-metrics`}
+                        values={benchmark.evaluation_metrics}
+                        expanded={expandedTagCells[`${benchmark.id}-evaluation-metrics`] ?? false}
+                        onExpandedChange={handleExpandedTagCell}
+                      />
+                    </td>
+                    <td>
+                      <MetadataTags
+                        cellKey={`${benchmark.id}-language-support`}
+                        values={benchmark.language_support}
+                        expanded={expandedTagCells[`${benchmark.id}-language-support`] ?? false}
+                        onExpandedChange={handleExpandedTagCell}
+                      />
+                    </td>
+                    <td> <MetadataTag value={benchmark.integration_option} /></td>
+                    <td> <MetadataTag value={benchmark.license} /></td>
                     <td>{benchmark.cited_by}</td>
                   </tr>
                 ))}
@@ -337,7 +462,7 @@ export default function BrowsePage() {
             </table>
           </div>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

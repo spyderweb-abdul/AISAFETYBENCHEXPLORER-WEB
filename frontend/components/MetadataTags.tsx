@@ -3,43 +3,64 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const TAG_PALETTE = [
-  { background: "#e0f2fe", color: "#075985", border: "#7dd3fc" },
-  { background: "#dcfce7", color: "#166534", border: "#86efac" },
-  { background: "#fef3c7", color: "#92400e", border: "#fcd34d" },
-  { background: "#fce7f3", color: "#9d174d", border: "#f9a8d4" },
-  { background: "#ede9fe", color: "#5b21b6", border: "#c4b5fd" },
-  { background: "#ccfbf1", color: "#115e59", border: "#5eead4" },
-  { background: "#ffedd5", color: "#9a3412", border: "#fdba74" },
-  { background: "#e2e8f0", color: "#334155", border: "#cbd5e1" },
-];
+  { background: "#e0f2fe", color: "#075985" },
+  { background: "#dcfce7", color: "#166534" },
+  { background: "#fef3c7", color: "#92400e" },
+  { background: "#fce7f3", color: "#9d174d" },
+  { background: "#ede9fe", color: "#5b21b6" },
+  { background: "#ccfbf1", color: "#115e59" },
+  { background: "#ffedd5", color: "#9a3412" },
+  { background: "#e2e8f0", color: "#334155" },
+] as const;
 
-const BORDER_STYLES = ["solid", "dashed", "dotted", "double"] as const;
 const MAX_COLLAPSED_ROWS = 2;
 
 function normalizeValue(value: string) {
   return value.trim().toLocaleLowerCase();
 }
 
-function hashValue(value: string, seed = 0) {
-  let hash = 2166136261 ^ seed;
+function hashValue(value: string) {
+  let hash = 2166136261;
+
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
     hash = Math.imul(hash, 16777619);
   }
+
   return hash >>> 0;
 }
 
 function tagStyle(value: string) {
   const normalized = normalizeValue(value);
   const palette = TAG_PALETTE[hashValue(normalized) % TAG_PALETTE.length];
-  const borderStyle = BORDER_STYLES[hashValue(normalized, 97) % BORDER_STYLES.length];
 
   return {
     backgroundColor: palette.background,
-    borderColor: palette.border,
-    borderStyle,
     color: palette.color,
   };
+}
+
+interface MetadataTagProps {
+  value?: string | null;
+  className?: string;
+}
+
+export function MetadataTag({ value, className = "" }: MetadataTagProps) {
+  const cleanedValue = value?.trim();
+
+  if (!cleanedValue) {
+    return <span className="metadata-tags-empty">Not specified</span>;
+  }
+
+  return (
+    <span
+      className={`metadata-tag ${className}`.trim()}
+      style={tagStyle(cleanedValue)}
+      title={cleanedValue}
+    >
+      {cleanedValue}
+    </span>
+  );
 }
 
 interface MetadataTagsProps {
@@ -57,6 +78,7 @@ export default function MetadataTags({
 }: MetadataTagsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(values?.length ?? 0);
+
   const tagValues = useMemo(
     () => (values ?? []).map((value) => value.trim()).filter(Boolean),
     [values],
@@ -70,9 +92,13 @@ export default function MetadataTags({
 
     const updateVisibleCount = () => {
       const container = containerRef.current;
+
       if (!container) return;
 
-      const tags = Array.from(container.querySelectorAll<HTMLElement>("[data-metadata-tag]"));
+      const tags = Array.from(
+        container.querySelectorAll<HTMLElement>("[data-metadata-tag]"),
+      );
+
       if (tags.length === 0) return;
 
       const rowStarts: number[] = [];
@@ -80,7 +106,11 @@ export default function MetadataTags({
 
       for (let index = 0; index < tags.length; index += 1) {
         const rowTop = Math.round(tags[index].offsetTop);
-        if (!rowStarts.includes(rowTop)) rowStarts.push(rowTop);
+
+        if (!rowStarts.includes(rowTop)) {
+          rowStarts.push(rowTop);
+        }
+
         if (rowStarts.length > MAX_COLLAPSED_ROWS) {
           count = index;
           break;
@@ -91,11 +121,15 @@ export default function MetadataTags({
     };
 
     const frame = window.requestAnimationFrame(updateVisibleCount);
-    const observer = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(updateVisibleCount);
 
-    if (containerRef.current && observer) observer.observe(containerRef.current);
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateVisibleCount);
+
+    if (containerRef.current && observer) {
+      observer.observe(containerRef.current);
+    }
 
     return () => {
       window.cancelAnimationFrame(frame);
@@ -107,7 +141,10 @@ export default function MetadataTags({
     return <span className="metadata-tags-empty">Not specified</span>;
   }
 
-  const displayedValues = expanded ? tagValues : tagValues.slice(0, visibleCount);
+  const displayedValues = expanded
+    ? tagValues
+    : tagValues.slice(0, visibleCount);
+
   const hiddenCount = Math.max(tagValues.length - displayedValues.length, 0);
 
   return (
@@ -125,6 +162,7 @@ export default function MetadataTags({
           </span>
         ))}
       </div>
+
       {!expanded && hiddenCount > 0 && (
         <button
           className="metadata-tags-toggle"
@@ -134,6 +172,7 @@ export default function MetadataTags({
           +{hiddenCount} more
         </button>
       )}
+
       {expanded && tagValues.length > 1 && (
         <button
           className="metadata-tags-toggle"

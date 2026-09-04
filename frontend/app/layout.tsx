@@ -1,12 +1,14 @@
-// Destination path: frontend/app/layout.tsx
-// Replaces the existing file in full. (Supersedes the earlier draft
-// from the previous session, which only mounted a bare NotificationBell
-// with no logout or role-aware nav -- see AppHeader.tsx for the full
-// fix.)
-
 import type { ReactNode } from "react";
 import "./globals.css";
 import AppHeader from "../components/AppHeader";
+
+import { Ubuntu_Mono } from "next/font/google";
+
+const ubuntuMono = Ubuntu_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-ubuntu-mono",
+});
 
 export const metadata = {
   title: "AISafetyBenchExplorer",
@@ -16,7 +18,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>
+      <body className={ubuntuMono.className}>
         <AppHeader />
         {children}
       </body>
