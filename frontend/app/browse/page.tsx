@@ -4,15 +4,18 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Benchmark,
+  CatalogueSummary,
   Vocab,
   exportPublicCsvUrl,
   exportPublicXlsxUrl,
   fetchVocab,
+  getCatalogueSummary,
   listBenchmarks,
   listVocabTerms,
 } from "../../lib/api";
 import ComplexityBadge from "../../components/ComplexityBadge";
 import MetadataTags, { MetadataTag,} from "../../components/MetadataTags";
+import CatalogueReports from "../../components/CatalogueReports";
 
 
 function RepositoryLink({
@@ -66,6 +69,9 @@ export default function BrowsePage() {
   const [taskTypeOptions, setTaskTypeOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<CatalogueSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState(false);
 
   const [search, setSearch] = useState("");
   const [taskType, setTaskType] = useState("");
@@ -130,6 +136,19 @@ export default function BrowsePage() {
     }
   }
 
+  async function loadSummary() {
+    setSummaryLoading(true);
+    setSummaryError(false);
+
+    try {
+      setSummary(await getCatalogueSummary());
+    } catch {
+      setSummaryError(true);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }
+
   function clearFilters() {
     setSearch("");
     setTaskType("");
@@ -143,6 +162,13 @@ export default function BrowsePage() {
 
   useEffect(() => {
     fetchVocab().then(setVocab).catch(() => setVocab(null));
+  }, []);
+
+  useEffect(() => {
+    loadSummary();
+    // The executive summary represents the full published catalogue and is
+    // intentionally independent of the interactive table filters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -191,6 +217,61 @@ export default function BrowsePage() {
           View research gap heatmap
         </Link>
       </header>
+
+      <section
+        className="catalogue-summary"
+        aria-labelledby="catalogue-summary-heading"
+        aria-busy={summaryLoading}
+      >
+        <div className="catalogue-summary-heading">
+          <div>
+            <p className="eyebrow">Live overview</p>
+            <h2 id="catalogue-summary-heading">Catalogue summary</h2>
+          </div>
+          <p>All published benchmarks. Coverage requires both code and dataset links.</p>
+        </div>
+
+        {summaryError ? (
+          <div className="catalogue-summary-error" role="alert">
+            <span>Summary figures are temporarily unavailable.</span>
+            <button className="text-button" type="button" onClick={loadSummary}>
+              Try again
+            </button>
+          </div>
+        ) : (
+          <dl className="catalogue-summary-grid" aria-live="polite">
+            {[
+              ["Total Benchmarks", summary?.total_benchmarks.toLocaleString()],
+              ["Popular", summary?.popular.toLocaleString()],
+              ["High", summary?.high.toLocaleString()],
+              ["Medium", summary?.medium.toLocaleString()],
+              [
+                "Average metrics / Benchmark",
+                summary?.average_metrics_per_benchmark.toFixed(1),
+              ],
+              ["Average Citation", summary?.average_citations.toFixed(1)],
+              [
+                "Code + Data Coverage",
+                summary ? `${summary.code_and_data_coverage_percent.toFixed(1)}%` : undefined,
+              ],
+            ].map(([label, value]) => (
+              <div className="catalogue-summary-item" key={label}>
+                <dt>{label}</dt>
+                <dd>
+                  {summaryLoading ? (
+                    <>
+                      <span className="catalogue-summary-placeholder" aria-hidden="true" />
+                      <span className="sr-only">Loading</span>
+                    </>
+                  ) : (
+                    value
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </section>
 
       <section className="browse-filter-panel" aria-labelledby="browse-filters-heading">
         <div className="browse-section-heading">
@@ -405,6 +486,7 @@ export default function BrowsePage() {
                         values={benchmark.use_cases}
                         expanded={expandedTagCells[`${benchmark.id}-use-cases`] ?? false}
                         onExpandedChange={handleExpandedTagCell}
+                        category="use-case"
                       />
                     </td>
                     <td>
@@ -463,6 +545,7 @@ export default function BrowsePage() {
           </div>
         )}
       </section>
+      <CatalogueReports />
     </main>
   );
 }

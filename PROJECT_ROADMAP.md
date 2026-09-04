@@ -1,6 +1,6 @@
 # AISafetyBenchExplorer Web Scaling - Project Roadmap
 
-Status document. Last updated: 2026-09-02.
+Status document. Last updated: 2026-09-04.
 
 This file is the canonical memory reference for this Space. Consult it
 first in every future session before proposing new work. Update it
@@ -97,7 +97,7 @@ from the original pipeline repository.
 
 ---
 
-## 5. Resolved This Session (2026-09-01 to 2026-09-02)
+## 5. Resolved This Session (2026-09-01 to 2026-09-04)
 
 Full rationale for each item lives in PROJECT_ROADMAP_ARCHIVE.md and
 in this session's own conversation history. Summary only, so future
@@ -154,13 +154,25 @@ sessions know what NOT to re-investigate from scratch:
 - TagMultiSelect dropdown option text was invisible (white-on-white,
   inherited a global button text color) despite being fully clickable
   -- fixed with an explicit text color and hover state.
+- The public /browse catalogue now has a compact live executive summary
+  backed by GET /stats/catalogue-summary. It aggregates all published
+  benchmarks independently of table filters and list pagination, including
+  complexity counts, average evaluation metrics, average citations, and the
+  percentage with both code and dataset repository links.
+- A live meta-analysis report explorer now sits below the /browse catalogue,
+  backed by GET /stats/catalogue-reports. It pairs exact data tables with
+  accessible responsive SVG charts for publication trend, complexity,
+  research gaps, task types, evaluation metrics, citations, repositories,
+  language and modality coverage, licenses, creation method, development
+  purpose, and use cases. Reports aggregate every published record and use
+  only the latest repository snapshot per source.
 - A pre-existing Alembic branch (two unmerged heads,
   0006_add_community_submissions and 0007_use_case_safety_dim_cols)
   was merged via 0008_add_model_options's tuple down_revision.
 
 ---
 
-## 6. Known Gaps / Open Items (as of 2026-09-02)
+## 6. Known Gaps / Open Items (as of 2026-09-04)
 
 ### Carried over, not yet addressed
 
@@ -229,4 +241,3 @@ sessions know what NOT to re-investigate from scratch:
   once this session and the user has flagged it as something to
   actively guard against. Do not even reference the exact string as an
   example inside a delivered file's body; describe it instead.
-</content>

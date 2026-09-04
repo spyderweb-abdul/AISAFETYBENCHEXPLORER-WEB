@@ -40,28 +40,31 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="container" style={{ maxWidth: 420 }}>
-      <h2>Create a Researcher Account</h2>
-      <p style={{ color: "#666", fontSize: 13 }}>
+    <main className="auth-shell">
+      <header className="auth-heading">
+        <p className="eyebrow">Researcher workspace</p>
+        <h1>Create an account</h1>
+        <p>
         Researcher accounts can submit benchmark papers by DOI for automatic
         extraction and admin review. Every account created here is a
-        researcher account -- there is no self-service way to become an admin.
-      </p>
+        researcher account. There is no self-service admin access.
+        </p>
+      </header>
       <form onSubmit={handleSubmit} className="card">
         <div className="field">
-          <label>Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <label htmlFor="signup-email">Email</label>
+          <input id="signup-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
         </div>
         <div className="field">
-          <label>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
+          <label htmlFor="signup-password">Password</label>
+          <input id="signup-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
         </div>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={submitting}>{submitting ? "Creating account..." : "Sign Up"}</button>
       </form>
-      <p style={{ fontSize: 13 }}>
+      <p className="auth-footer">
         Already have an account? <Link href="/login">Log in</Link>
       </p>
-    </div>
+    </main>
   );
 }

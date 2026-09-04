@@ -3,15 +3,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const TAG_PALETTE = [
-  { background: "#e0f2fe", color: "#075985" },
-  { background: "#dcfce7", color: "#166534" },
-  { background: "#fef3c7", color: "#92400e" },
-  { background: "#fce7f3", color: "#9d174d" },
-  { background: "#ede9fe", color: "#5b21b6" },
-  { background: "#ccfbf1", color: "#115e59" },
-  { background: "#ffedd5", color: "#9a3412" },
-  { background: "#e2e8f0", color: "#334155" },
+  { background: "#e4f3ef", color: "#174e45" },
+  { background: "#e8eff9", color: "#244d77" },
+  { background: "#f8efdf", color: "#694411" },
+  { background: "#f6e8ee", color: "#742842" },
+  { background: "#edeafa", color: "#4c3a82" },
+  { background: "#e5f1eb", color: "#245b3a" },
+  { background: "#f8e8df", color: "#71391e" },
+  { background: "#ebeff0", color: "#37474f" },
 ] as const;
+
+const USE_CASE_PALETTE: Record<string, (typeof TAG_PALETTE)[number]> = {
+  "medical ai": TAG_PALETTE[3],
+  "financial services": TAG_PALETTE[1],
+  "customer service chatbots": TAG_PALETTE[4],
+  "content moderation": TAG_PALETTE[2],
+  education: TAG_PALETTE[0],
+  "general purpose": TAG_PALETTE[7],
+};
 
 const MAX_COLLAPSED_ROWS = 2;
 
@@ -30,9 +39,12 @@ function hashValue(value: string) {
   return hash >>> 0;
 }
 
-function tagStyle(value: string) {
+function tagStyle(value: string, category?: "use-case") {
   const normalized = normalizeValue(value);
-  const palette = TAG_PALETTE[hashValue(normalized) % TAG_PALETTE.length];
+  const palette =
+    category === "use-case" && USE_CASE_PALETTE[normalized]
+      ? USE_CASE_PALETTE[normalized]
+      : TAG_PALETTE[hashValue(normalized) % TAG_PALETTE.length];
 
   return {
     backgroundColor: palette.background,
@@ -43,9 +55,10 @@ function tagStyle(value: string) {
 interface MetadataTagProps {
   value?: string | null;
   className?: string;
+  category?: "use-case";
 }
 
-export function MetadataTag({ value, className = "" }: MetadataTagProps) {
+export function MetadataTag({ value, className = "", category }: MetadataTagProps) {
   const cleanedValue = value?.trim();
 
   if (!cleanedValue) {
@@ -55,7 +68,8 @@ export function MetadataTag({ value, className = "" }: MetadataTagProps) {
   return (
     <span
       className={`metadata-tag ${className}`.trim()}
-      style={tagStyle(cleanedValue)}
+      style={tagStyle(cleanedValue, category)}
+      data-tag-value={normalizeValue(cleanedValue)}
       title={cleanedValue}
     >
       {cleanedValue}
@@ -68,6 +82,7 @@ interface MetadataTagsProps {
   values?: string[] | null;
   expanded: boolean;
   onExpandedChange: (cellKey: string, expanded: boolean) => void;
+  category?: "use-case";
 }
 
 export default function MetadataTags({
@@ -75,6 +90,7 @@ export default function MetadataTags({
   values,
   expanded,
   onExpandedChange,
+  category,
 }: MetadataTagsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(values?.length ?? 0);
@@ -155,7 +171,8 @@ export default function MetadataTags({
             className="metadata-tag"
             data-metadata-tag
             key={`${value}-${index}`}
-            style={tagStyle(value)}
+            style={tagStyle(value, category)}
+            data-tag-value={normalizeValue(value)}
             title={value}
           >
             {value}

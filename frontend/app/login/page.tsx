@@ -28,22 +28,26 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="container" style={{ maxWidth: 400, marginTop: 80 }}>
+    <main className="auth-shell">
+      <header className="auth-heading">
+        <p className="eyebrow">Private workspace</p>
+        <h1>Sign in</h1>
+        <p>Access the administration and researcher workflows.</p>
+      </header>
       <div className="card">
-        <h2>AISafetyBenchExplorer Admin</h2>
         <form onSubmit={handleSubmit}>
           <div className="field">
-            <label>Email</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
+            <label htmlFor="login-email">Email</label>
+            <input id="login-email" value={email} onChange={(e) => setEmail(e.target.value)} type="email" required autoComplete="email" />
           </div>
           <div className="field">
-            <label>Password</label>
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required />
+            <label htmlFor="login-password">Password</label>
+            <input id="login-password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" required autoComplete="current-password" />
           </div>
           {error && <p className="error">{error}</p>}
           <button type="submit" disabled={loading}>{loading ? "Signing in..." : "Sign in"}</button>
         </form>
       </div>
-    </div>
+    </main>
   );
 }

@@ -1,16 +1,6 @@
-// Destination path: frontend/app/admin/vocab/page.tsx
-// New file.
-//
-// Admin CRUD UI for the VocabTerm catalogue (backend/app/routers/vocab_terms.py).
-// Two tabs: Task Types and Evaluation Metrics. Each row can be
-// activated/deactivated, edited, marked as an alias of another term
-// (canonical merge), or deleted. An "unreviewed" filter surfaces terms
-// that were auto-added by an extraction (source="agent") and never
-// looked at by an admin.
-
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   VocabTerm,
   createVocabTerm,
@@ -37,6 +27,13 @@ export default function AdminVocabPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTerm, setEditTerm] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
+
+  const PAGE_SIZE = 20;
+
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [page, setPage] = useState(1);
 
   async function load() {
     setLoading(true);
@@ -104,11 +101,6 @@ export default function AdminVocabPage() {
   }
 
   async function handleMarkReviewed(t: VocabTerm) {
-    // "Marking reviewed" here just means promoting source from agent's
-    // implicit unreviewed state -- since there's no separate "reviewed"
-    // flag, admins use is_canonical/is_active as the actual signal. This
-    // button simply re-saves the term with no changes to move it out of
-    // casual at-a-glance attention; real curation is edit/merge/delete.
     setSavingId(t.id);
     try {
       await updateVocabTerm(t.id, { is_canonical: true });
@@ -135,146 +127,330 @@ export default function AdminVocabPage() {
       setSavingId(null);
     }
   }
+  async function updateFilters(
+    nextSearch = search,
+    nextStatus = statusFilter,
+  ) {
+    setSearch(nextSearch);
+    setStatusFilter(nextStatus);
+    setPage(1);
+  }
+
+  async function changeCategory(nextCategory: Category) {
+    setCategory(nextCategory);
+    setSearch("");
+    setStatusFilter("all");
+    setPage(1);
+  }
+
+  const activeCount = terms.filter((term) => term.is_active).length;
+  const agentAddedCount = terms.filter((term) => term.source === "agent").length;
+
+  const filteredTerms = terms.filter((term) => {
+    const matchesSearch = term.term.toLowerCase().includes(search.trim().toLowerCase());
+
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "active" && term.is_active) ||
+      (statusFilter === "inactive" && !term.is_active);
+
+    return matchesSearch && matchesStatus;
+  });
+
+  const pageCount = Math.max(1, Math.ceil(filteredTerms.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+
+  const visibleTerms = filteredTerms.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE,
+  );
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-2">Vocabulary Catalogue</h1>
-      <p className="text-sm text-gray-600 mb-6">
-        Task types and evaluation metrics seen across the catalogue. Active,
-        canonical terms are fed to the extraction agent as reference
-        guidance (not a strict enum) and grow automatically as new papers
-        are extracted. Deactivating or deleting a term never changes any
-        existing benchmark record.
-      </p>
+    <div className="vocab-page">
+      <div className="vocab-page-header">
+        <div>
+          <h1>Vocabulary Catalogue</h1>
+          <p>
+            Curate task types and evaluation metrics used throughout the benchmark
+            catalogue. Active canonical terms guide extraction without changing
+            historical benchmark records.
+          </p>
+        </div>
 
-      <div className="flex gap-2 mb-6">
-        <button
-          onClick={() => setCategory("task_type")}
-          className={`px-4 py-2 rounded text-sm font-medium ${category === "task_type" ? "bg-indigo-600 text-white" : "bg-gray-100"}`}
-        >
-          Task Types
-        </button>
-        <button
-          onClick={() => setCategory("evaluation_metric")}
-          className={`px-4 py-2 rounded text-sm font-medium ${category === "evaluation_metric" ? "bg-indigo-600 text-white" : "bg-gray-100"}`}
-        >
-          Evaluation Metrics
-        </button>
-        <label className="flex items-center gap-2 text-sm ml-4">
+        <div className="vocab-summary">
+          <span><strong>{activeCount}</strong> active</span>
+          <span><strong>{terms.length}</strong> total</span>
+          <span><strong>{agentAddedCount}</strong> agent-added</span>
+        </div>
+      </div>
+
+      <div className="vocab-controls">
+        <div className="vocab-tabs" role="tablist" aria-label="Vocabulary category">
+          <button
+            className={category === "task_type" ? "tab-button active" : "tab-button"}
+            onClick={() => changeCategory("task_type")}
+            type="button"
+            role="tab"
+            aria-selected={category === "task_type"}
+          >
+            Task Types
+          </button>
+
+          <button
+            className={category === "evaluation_metric" ? "tab-button active" : "tab-button"}
+            onClick={() => changeCategory("evaluation_metric")}
+            type="button"
+            role="tab"
+            aria-selected={category === "evaluation_metric"}
+          >
+            Evaluation Metrics
+          </button>
+        </div>
+
+        <label className="vocab-review-filter">
           <input
             type="checkbox"
             checked={unreviewedOnly}
-            onChange={(e) => setUnreviewedOnly(e.target.checked)}
+            onChange={(e) => {
+              setUnreviewedOnly(e.target.checked);
+              setPage(1);
+            }}
           />
-          Show only agent-added, unreviewed terms
+          Show agent-added terms only
         </label>
       </div>
 
-      <section className="bg-white rounded-lg border p-5 mb-8 shadow-sm">
-        <h2 className="text-lg font-semibold mb-4">
-          Add {category === "task_type" ? "Task Type" : "Evaluation Metric"}
-        </h2>
-        <form onSubmit={handleCreate} className="flex gap-3">
-          <input
-            type="text"
-            value={form.term}
-            onChange={(e) => setForm({ term: e.target.value })}
-            placeholder={category === "task_type" ? "e.g. Sycophancy" : "e.g. Attack Success Rate"}
-            required
-            className="border rounded px-3 py-2 text-sm flex-1"
-          />
+      <section className="card">
+        <div className="vocab-section-header">
+          <div>
+            <h2>Add {category === "task_type" ? "Task Type" : "Evaluation Metric"}</h2>
+            <p>Add a controlled term for future curation and extraction guidance.</p>
+          </div>
+
           <button
-            type="submit"
-            disabled={creating}
-            className="bg-indigo-600 text-white px-5 py-2 rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+            className="secondary"
+            onClick={() => setShowCreateForm((value) => !value)}
+            type="button"
+            aria-expanded={showCreateForm}
           >
-            {creating ? "Adding..." : "Add"}
+            {showCreateForm ? "Collapse" : "Add Term"}
           </button>
-        </form>
-        {createError && <p className="text-red-600 text-sm mt-2">{createError}</p>}
+        </div>
+
+        {showCreateForm && (
+          <form className="vocab-create-row" onSubmit={handleCreate}>
+            <div className="vocab-create-field">
+              <label htmlFor="vocab-term">Term</label>
+              <input
+                id="vocab-term"
+                type="text"
+                value={form.term}
+                onChange={(e) => setForm({ term: e.target.value })}
+                placeholder={
+                  category === "task_type"
+                    ? "e.g. Sycophancy"
+                    : "e.g. Attack Success Rate"
+                }
+                required
+              />
+            </div>
+
+            <div className="vocab-create-action">
+              <span>Action</span>
+              <button type="submit" disabled={creating}>
+                {creating ? "Adding..." : "Add Term"}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {createError && <p className="error">{createError}</p>}
       </section>
 
-      <section className="bg-white rounded-lg border p-5 shadow-sm">
-        <h2 className="text-lg font-semibold mb-4">
+      <section className="card">
+        <h2 className="detail-section-title">
           All {category === "task_type" ? "Task Types" : "Evaluation Metrics"} ({terms.length})
         </h2>
-        {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
-        {loading && <p className="text-sm text-gray-500">Loading...</p>}
+        {error && <p className="error">{error}</p>}
+        {loading && <p className="muted-copy">Loading...</p>}
         {!loading && terms.length === 0 && (
-          <p className="text-sm text-gray-500">No terms match this filter.</p>
+          <p className="muted-copy">No terms match this filter.</p>
         )}
-        <div className="divide-y">
-          {terms.map((t) => (
-            <div key={t.id} className="py-3 flex justify-between items-center flex-wrap gap-2">
-              {editingId === t.id ? (
-                <div className="flex gap-2 flex-1">
-                  <input
-                    type="text"
-                    value={editTerm}
-                    onChange={(e) => setEditTerm(e.target.value)}
-                    className="border rounded px-3 py-1.5 text-sm flex-1"
-                  />
-                  <button
-                    onClick={() => handleSaveEdit(t.id)}
-                    disabled={savingId === t.id}
-                    className="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50"
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={() => setEditingId(null)}
-                    className="bg-gray-100 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <p className="text-sm font-medium">
-                      {t.term}{" "}
-                      <span className={`text-xs px-2 py-0.5 rounded ${t.is_active ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-600"}`}>
-                        {t.is_active ? "active" : "inactive"}
-                      </span>{" "}
-                      {t.source === "agent" && (
-                        <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">
-                          agent-added
-                        </span>
+        <div>
+          <div className="vocab-toolbar">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => updateFilters(e.target.value, statusFilter)}
+              placeholder="Search terms"
+              aria-label="Search vocabulary terms"
+            />
+
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                updateFilters(
+                  search,
+                  e.target.value as "all" | "active" | "inactive",
+                )
+              }
+              aria-label="Filter vocabulary terms by status"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+
+            <button className="secondary" onClick={load} type="button">
+              Refresh
+            </button>
+          </div>
+
+          <div className="vocab-table-scroll">
+            <table className="vocab-table">
+              <thead>
+                <tr>
+                  <th>Term</th>
+                  <th>Status</th>
+                  <th>Origin</th>
+                  <th>Canonical</th>
+                  <th>Usage</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {visibleTerms.map((term) => {
+                  const isEditing = editingId === term.id;
+
+                  return (
+                    <Fragment key={term.id}>
+                      <tr>
+                        <td><strong>{term.term}</strong></td>
+
+                        <td>
+                          <span className={term.is_active ? "vocab-status vocab-status--active" : "vocab-status vocab-status--inactive"}>
+                            {term.is_active ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+
+                        <td>
+                          <span className={term.source === "agent" ? "vocab-origin vocab-origin--agent" : "vocab-origin"}>
+                            {term.source === "agent" ? "Agent-added" : term.source}
+                          </span>
+                        </td>
+
+                        <td>{term.is_canonical ? "Canonical" : "Alias"}</td>
+
+                        <td>{term.usage_count}</td>
+
+                        <td>
+                          <div className="vocab-row-actions">
+                            {term.source === "agent" && !term.is_canonical && (
+                              <button
+                                className="secondary"
+                                type="button"
+                                onClick={() => handleMarkReviewed(term)}
+                                disabled={savingId === term.id}
+                              >
+                                Review
+                              </button>
+                            )}
+
+                            <button
+                              className="secondary"
+                              type="button"
+                              onClick={() => handleToggleActive(term)}
+                              disabled={savingId === term.id}
+                            >
+                              {term.is_active ? "Deactivate" : "Activate"}
+                            </button>
+
+                            <button
+                              className="secondary"
+                              type="button"
+                              onClick={() => isEditing ? setEditingId(null) : startEdit(term)}
+                            >
+                              {isEditing ? "Close" : "Rename"}
+                            </button>
+
+                            <button
+                              className="danger"
+                              type="button"
+                              onClick={() => handleDelete(term)}
+                              disabled={savingId === term.id}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {isEditing && (
+                        <tr className="vocab-edit-row">
+                          <td colSpan={6}>
+                            <div className="vocab-edit-form">
+                              <div className="field">
+                                <label htmlFor={`edit-term-${term.id}`}>Term</label>
+                                <input
+                                  id={`edit-term-${term.id}`}
+                                  value={editTerm}
+                                  onChange={(e) => setEditTerm(e.target.value)}
+                                />
+                              </div>
+
+                              <button
+                                className="success"
+                                type="button"
+                                onClick={() => handleSaveEdit(term.id)}
+                                disabled={savingId === term.id}
+                              >
+                                {savingId === term.id ? "Saving..." : "Save"}
+                              </button>
+
+                              <button
+                                className="secondary"
+                                type="button"
+                                onClick={() => setEditingId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                      {!t.is_canonical && (
-                        <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
-                          alias
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-xs text-gray-500">used {t.usage_count} time{t.usage_count === 1 ? "" : "s"}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleToggleActive(t)}
-                      disabled={savingId === t.id}
-                      className="bg-gray-100 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 disabled:opacity-50"
-                    >
-                      {t.is_active ? "Deactivate" : "Activate"}
-                    </button>
-                    <button
-                      onClick={() => startEdit(t)}
-                      className="bg-gray-100 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200"
-                    >
-                      Rename
-                    </button>
-                    <button
-                      onClick={() => handleDelete(t)}
-                      disabled={savingId === t.id}
-                      className="bg-red-600 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-red-700 disabled:opacity-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </>
-              )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="vocab-pagination">
+            <span>
+              Page {safePage} of {pageCount}
+            </span>
+
+            <div>
+              <button
+                className="secondary"
+                disabled={safePage === 1}
+                onClick={() => setPage((current) => current - 1)}
+                type="button"
+              >
+                Previous
+              </button>
+
+              <button
+                className="secondary"
+                disabled={safePage === pageCount}
+                onClick={() => setPage((current) => current + 1)}
+                type="button"
+              >
+                Next
+              </button>
             </div>
-          ))}
+          </div>
         </div>
       </section>
     </div>

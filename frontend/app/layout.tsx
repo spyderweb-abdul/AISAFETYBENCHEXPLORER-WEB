@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import "./globals.css";
 import AppHeader from "../components/AppHeader";
-
 import { Ubuntu_Mono } from "next/font/google";
 
 const ubuntuMono = Ubuntu_Mono({
@@ -18,7 +17,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className={ubuntuMono.className}>
+      <body className={ubuntuMono.variable}>
         <AppHeader />
         {children}
       </body>

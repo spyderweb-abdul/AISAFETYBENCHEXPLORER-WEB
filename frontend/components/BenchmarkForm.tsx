@@ -27,6 +27,7 @@ import { useRouter } from "next/navigation";
 import {
   Benchmark, classifyComplexity, createBenchmark, fetchVocab, listVocabTerms, updateBenchmark, Vocab
 } from "../lib/api";
+import { MetadataTag } from "./MetadataTags";
 import TagMultiSelect from "./TagMultiSelect";
 
 interface Props {
@@ -154,29 +155,24 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
   return (
     <form onSubmit={handleSubmit} className="card">
       {benchmarkId && (form.use_cases?.length > 0 || form.safety_dimensions?.length > 0) && (
-        <div
-          style={{
-            marginBottom: 16, padding: "10px 12px", borderRadius: 6,
-            background: "#f3f4f6", fontSize: 12,
-          }}
-        >
+        <div className="auto-classification">
           <strong>Auto-classified (recomputed on every save):</strong>
           {form.use_cases?.length > 0 && (
-            <p style={{ margin: "6px 0 0" }}>
+            <p className="auto-classification-row">
               Use Cases: {form.use_cases.map((u: string) => (
-                <span key={u} className="badge badge-medium" style={{ marginRight: 4 }}>{u}</span>
+                <MetadataTag key={u} value={u} category="use-case" />
               ))}
             </p>
           )}
           {form.safety_dimensions?.length > 0 && (
-            <p style={{ margin: "6px 0 0" }}>
+            <p className="auto-classification-row">
               Safety Dimensions: {form.safety_dimensions.map((s: string) => (
-                <span key={s} className="badge badge-low" style={{ marginRight: 4 }}>{s}</span>
+                <MetadataTag key={s} value={s} />
               ))}
             </p>
           )}
-          <p style={{ margin: "6px 0 0", color: "#666" }}>
-            Derived from Task Type, Description, and Benchmark Name --
+          <p className="auto-classification-note">
+            Derived from Task Type, Description, and Benchmark Name. These values are
             not directly editable. Change those fields and save to
             recompute.
           </p>
@@ -253,7 +249,7 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
         </div>
         <div className="field">
           <label>Citation Range (auto-computed from Cited By)</label>
-          <input value={form.citation_range || ""} disabled style={{ background: "#f3f4f6", color: "#666" }} />
+          <input className="disabled-input" value={form.citation_range || ""} disabled />
         </div>
         <label>Entry Modalities (controlled vocabulary, multi-select)</label>
         <div>
@@ -311,7 +307,7 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
       <h3>Complexity Classifier</h3>
       <div className="form-grid">
         {Object.keys(signals).filter((k) => typeof (signals as any)[k] === "boolean").map((key) => (
-          <label key={key} style={{ fontWeight: 400, fontSize: 12 }}>
+          <label key={key} className="classifier-signal">
             <input
               type="checkbox"
               checked={(signals as any)[key]}
@@ -324,7 +320,7 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
         {classifying ? "Classifying..." : "Run Complexity Classifier"}
       </button>
 
-      <div className="form-grid" style={{ marginTop: 12 }}>
+      <div className="form-grid classifier-result">
         <div className="field">
           <label>Complexity Level</label>
           <select value={form.complexity_level} onChange={(e) => setField("complexity_level", e.target.value)}>

@@ -18,16 +18,15 @@ import Link from "next/link";
 import { Benchmark, Vocab, deleteBenchmark, exportXlsxUrl, fetchVocab, listBenchmarks } from "../../../lib/api";
 import ComplexityBadge from "../../../components/ComplexityBadge";
 
-const STATUS_BADGE_STYLE: Record<string, { background: string; color: string }> = {
-  published: { background: "#dcfce7", color: "#166534" },
-  pending_review: { background: "#fef3c7", color: "#92400e" },
-  rejected: { background: "#fee2e2", color: "#991b1b" },
+const STATUS_BADGE_CLASS: Record<string, string> = {
+  published: "status-tag status-tag--success",
+  pending_review: "status-tag status-tag--warning",
+  rejected: "status-tag status-tag--danger",
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const style = STATUS_BADGE_STYLE[status] || { background: "#e5e5e5", color: "#444" };
   return (
-    <span className="badge" style={style}>
+    <span className={STATUS_BADGE_CLASS[status] ?? "status-tag"}>
       {status.replaceAll("_", " ")}
     </span>
   );
@@ -67,18 +66,23 @@ export default function BenchmarksListPage() {
   }
 
   return (
-    <div className="container">
-      <div className="topbar">
-        <h2>Benchmarks ({benchmarks.length})</h2>
-        <div style={{ display: "flex", gap: 8 }}>
-          <a href={exportXlsxUrl()}><button className="secondary">Export to Excel</button></a>
-          <Link href="/admin/benchmarks/new"><button>+ New Benchmark</button></Link>
+    <main className="admin-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Catalogue administration</p>
+          <h1>Benchmarks <span className="metadata-tags-empty">{benchmarks.length}</span></h1>
+          <p className="page-description">Review, curate, publish, and export benchmark records.</p>
         </div>
-      </div>
+        <div className="admin-actions">
+          <a href={exportXlsxUrl()} className="button secondary">Export Excel</a>
+          <Link href="/admin/benchmarks/new" className="button">New benchmark</Link>
+        </div>
+      </header>
 
-      <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} />
-        <select value={complexity} onChange={(e) => setComplexity(e.target.value)}>
+      <section className="card" aria-label="Benchmark filters">
+        <div className="admin-toolbar">
+        <input aria-label="Search benchmarks by name" placeholder="Search benchmark name" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <select aria-label="Filter benchmarks by complexity" value={complexity} onChange={(e) => setComplexity(e.target.value)}>
           <option value="">All complexity levels</option>
           <option value="Popular">Popular</option>
           <option value="High">High</option>
@@ -86,23 +90,25 @@ export default function BenchmarksListPage() {
           <option value="Low">Low</option>
           <option value="Unknown">Unknown</option>
         </select>
-        <select value={useCase} onChange={(e) => setUseCase(e.target.value)}>
+        <select aria-label="Filter benchmarks by use case" value={useCase} onChange={(e) => setUseCase(e.target.value)}>
           <option value="">All use cases</option>
           {(vocab?.use_cases ?? []).map((u) => (
             <option key={u} value={u}>{u}</option>
           ))}
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select aria-label="Filter benchmarks by status" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">Default (hides rejected)</option>
           <option value="published">Published only</option>
           <option value="pending_review">Pending review only</option>
           <option value="rejected">Rejected only</option>
         </select>
-      </div>
+        </div>
+      </section>
 
-      <div className="card">
-        {loading ? <p>Loading...</p> : (
-          <table>
+      <section className="card" aria-labelledby="benchmark-table-heading">
+        <h2 id="benchmark-table-heading" className="sr-only">Benchmark records</h2>
+        {loading ? <div className="browse-state" role="status">Loading benchmark records.</div> : (
+          <div className="table-scroll"><table>
             <thead>
               <tr>
                 <th>Name</th><th>Task Type</th><th>Use Case</th><th>Status</th><th>Complexity</th><th>Cited By</th><th>License</th><th></th>
@@ -124,9 +130,9 @@ export default function BenchmarksListPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

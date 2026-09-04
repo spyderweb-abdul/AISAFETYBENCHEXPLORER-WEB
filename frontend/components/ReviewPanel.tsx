@@ -49,9 +49,9 @@ export default function ReviewPanel({ benchmark, onReviewed }: Props) {
   }
 
   return (
-    <div className="card" style={{ background: "#fefce8", border: "1px solid #fde68a" }}>
-      <h3 style={{ marginTop: 0 }}>Pending Review</h3>
-      <p style={{ fontSize: 13, color: "#666" }}>
+    <section className="card review-panel" aria-labelledby="pending-review-heading">
+      <h2 id="pending-review-heading" className="detail-section-title">Pending review</h2>
+      <p>
         This benchmark was extracted and is awaiting approval before it
         becomes visible on the public /browse dashboard. Review the
         fields above (and the uncertainty signals below) before
@@ -65,7 +65,7 @@ export default function ReviewPanel({ benchmark, onReviewed }: Props) {
         </div>
         <div className="field">
           <label>Complexity Justification</label>
-          <p style={{ fontSize: 13 }}>{benchmark.complexity_justification || <em style={{ color: "#999" }}>None provided</em>}</p>
+          <p>{benchmark.complexity_justification || <span className="metadata-tags-empty">Not provided</span>}</p>
         </div>
       </div>
 
@@ -81,7 +81,7 @@ export default function ReviewPanel({ benchmark, onReviewed }: Props) {
 
       {error && <p className="error">{error}</p>}
 
-      <div style={{ display: "flex", gap: 8 }}>
+      <div className="review-actions">
         <button type="button" onClick={() => handleReview(true)} disabled={submitting}>
           {submitting ? "Saving..." : "Approve -- Publish"}
         </button>
@@ -89,6 +89,6 @@ export default function ReviewPanel({ benchmark, onReviewed }: Props) {
           {submitting ? "Saving..." : "Reject"}
         </button>
       </div>
-    </div>
+    </section>
   );
 }

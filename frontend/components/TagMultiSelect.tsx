@@ -17,7 +17,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
 interface Props {
   label: string;
@@ -28,9 +28,11 @@ interface Props {
 }
 
 export default function TagMultiSelect({ label, options, selected, onChange, placeholder }: Props) {
+  const listboxId = useId();
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
   const [hoveredOption, setHoveredOption] = useState<string | null>(null);
+  const [activeOptionIndex, setActiveOptionIndex] = useState(0);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -44,36 +46,51 @@ export default function TagMultiSelect({ label, options, selected, onChange, pla
     setQuery("");
   }
 
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown" && filtered.length > 0) {
+      event.preventDefault();
+      setFocused(true);
+      setActiveOptionIndex((current) => Math.min(current + 1, filtered.length - 1));
+    }
+
+    if (event.key === "ArrowUp" && filtered.length > 0) {
+      event.preventDefault();
+      setActiveOptionIndex((current) => Math.max(current - 1, 0));
+    }
+
+    if (event.key === "Enter" && focused && filtered[activeOptionIndex]) {
+      event.preventDefault();
+      addValue(filtered[activeOptionIndex]);
+    }
+
+    if (event.key === "Escape") {
+      setFocused(false);
+    }
+  }
+
   function removeValue(value: string) {
     onChange(selected.filter((v) => v !== value));
   }
 
   return (
-    <div className="field" style={{ position: "relative" }}>
+    <div className="field tag-multi-select">
       <label>{label}</label>
 
       {selected.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+        <div className="tag-multi-selected">
           {selected.map((v) => (
             <span
               key={v}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                background: "#eef2ff", color: "#3730a3", borderRadius: 999,
-                padding: "2px 8px", fontSize: 12,
-              }}
+              className="tag-multi-value"
             >
               {v}
               <button
                 type="button"
                 onClick={() => removeValue(v)}
                 aria-label={`Remove ${v}`}
-                style={{
-                  border: "none", background: "transparent", color: "#3730a3",
-                  cursor: "pointer", fontSize: 12, lineHeight: 1, padding: 0,
-                }}
+                className="tag-multi-remove"
               >
-                &times;
+                ×
               </button>
             </span>
           ))}
@@ -84,36 +101,42 @@ export default function TagMultiSelect({ label, options, selected, onChange, pla
         type="text"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        onFocus={() => setFocused(true)}
+        onFocus={() => {
+          setFocused(true);
+          setActiveOptionIndex(0);
+        }}
         onBlur={() => setTimeout(() => setFocused(false), 150)}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder || `Search ${label.toLowerCase()}...`}
-        style={{ fontSize: 13 }}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={focused && filtered.length > 0}
+        aria-controls={listboxId}
+        aria-activedescendant={focused && filtered[activeOptionIndex] ? `${listboxId}-option-${activeOptionIndex}` : undefined}
       />
 
       {focused && filtered.length > 0 && (
         <div
-          style={{
-            position: "absolute", zIndex: 20, top: "100%", left: 0, right: 0,
-            background: "white", border: "1px solid #e5e5e5", borderRadius: 6,
-            marginTop: 2, maxHeight: 220, overflowY: "auto",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-          }}
+          id={listboxId}
+          className="tag-multi-options"
+          role="listbox"
+          aria-label={`${label} suggestions`}
         >
-          {filtered.map((o) => (
+          {filtered.map((o, index) => (
             <button
               type="button"
+              id={`${listboxId}-option-${index}`}
               key={o}
               onClick={() => addValue(o)}
-              onMouseEnter={() => setHoveredOption(o)}
-              onMouseLeave={() => setHoveredOption((cur) => (cur === o ? null : cur))}
-              style={{
-                display: "block", width: "100%", textAlign: "left",
-                padding: "6px 10px", fontSize: 12, border: "none",
-                background: hoveredOption === o ? "#f3f4f6" : "white",
-                color: "#111827",
-                cursor: "pointer",
+              onMouseEnter={() => {
+                setHoveredOption(o);
+                setActiveOptionIndex(index);
               }}
+              onMouseLeave={() => setHoveredOption((cur) => (cur === o ? null : cur))}
+              className={hoveredOption === o || activeOptionIndex === index ? "tag-multi-option tag-multi-option-active" : "tag-multi-option"}
               onMouseDown={(e) => e.preventDefault()}
+              role="option"
+              aria-selected={activeOptionIndex === index}
             >
               {o}
             </button>
@@ -122,7 +145,7 @@ export default function TagMultiSelect({ label, options, selected, onChange, pla
       )}
 
       {focused && query.trim() && filtered.length === 0 && (
-        <p style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
+        <p className="tag-multi-empty">
           No match. Type an exact new value and it can still be added manually if needed elsewhere.
         </p>
       )}

@@ -11,7 +11,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Cookies from "js-cookie";
 import Link from "next/link";
 import {
@@ -36,6 +36,7 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setLoggedIn(!!Cookies.get("access_token"));
@@ -59,6 +60,20 @@ export default function NotificationBell() {
       clearInterval(interval);
     };
   }, [loggedIn]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
 
   async function toggleOpen() {
     const next = !open;
@@ -89,72 +104,68 @@ export default function NotificationBell() {
   if (!loggedIn) return null;
 
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
-      <button className="secondary" onClick={toggleOpen} style={{ position: "relative" }}>
+    <div className="notification-menu">
+      <button
+        ref={triggerRef}
+        className="secondary notification-trigger"
+        onClick={toggleOpen}
+        type="button"
+        aria-expanded={open}
+        aria-controls="notification-panel"
+      >
         Notifications
         {unreadCount > 0 && (
-          <span
-            style={{
-              position: "absolute", top: -6, right: -6, background: "#dc2626",
-              color: "white", borderRadius: "50%", fontSize: 11, padding: "1px 6px",
-            }}
-          >
+          <span className="notification-count" aria-label={`${unreadCount} unread notifications`}>
             {unreadCount}
           </span>
         )}
       </button>
       {open && (
         <div
-          style={{
-            position: "absolute", right: 0, top: "110%", width: 360, maxHeight: 420,
-            overflowY: "auto", background: "white", border: "1px solid #e5e5e5",
-            borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 50, padding: 8,
-          }}
+          id="notification-panel"
+          className="notification-panel"
+          role="dialog"
+          aria-label="Notifications"
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <strong style={{ fontSize: 13 }}>Notifications</strong>
-            <button className="secondary" onClick={handleMarkAllRead} style={{ fontSize: 11 }}>
+          <div className="notification-panel-header">
+            <strong>Notifications</strong>
+            <button className="secondary notification-small-button" onClick={handleMarkAllRead} type="button">
               Mark all read
             </button>
           </div>
           {loading ? (
-            <p style={{ fontSize: 12, color: "#666" }}>Loading...</p>
+            <p className="notification-empty">Loading...</p>
           ) : notifications.length === 0 ? (
-            <p style={{ fontSize: 12, color: "#666" }}>No notifications yet.</p>
+            <p className="notification-empty">No notifications yet.</p>
           ) : (
             notifications.map((n) => {
               const audience = NOTIFICATION_AUDIENCE_LABEL[n.notification_type];
               return (
                 <div
                   key={n.id}
-                  style={{
-                    padding: 8, borderBottom: "1px solid #f0f0f0",
-                    background: n.is_read ? "white" : "#fef9e7",
-                  }}
+                  className={n.is_read ? "notification-item" : "notification-item notification-item-unread"}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: n.is_read ? 400 : 600 }}>{n.title}</div>
+                  <div className="notification-item-heading">
+                    <div className={n.is_read ? "notification-title" : "notification-title notification-title-unread"}>{n.title}</div>
                     {audience && (
                       <span
-                        style={{
-                          fontSize: 10, whiteSpace: "nowrap", color: "white",
-                          background: audience.color, borderRadius: 4, padding: "1px 6px",
-                        }}
+                        className="notification-audience"
+                        style={{ backgroundColor: audience.color }}
                       >
                         {audience.label}
                       </span>
                     )}
                   </div>
-                  {n.body && <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>{n.body}</div>}
-                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                  {n.body && <div className="notification-body">{n.body}</div>}
+                  <div className="notification-item-actions">
                     {n.link_path ? (
-                      <Link href={n.link_path} style={{ fontSize: 11 }}>View &rarr;</Link>
+                      <Link href={n.link_path} className="notification-view-link" onClick={() => setOpen(false)}>View →</Link>
                     ) : <span />}
                     {!n.is_read && (
                       <button
                         className="secondary"
-                        style={{ fontSize: 10 }}
                         onClick={() => handleMarkRead(n.id)}
+                        type="button"
                       >
                         Mark read
                       </button>
