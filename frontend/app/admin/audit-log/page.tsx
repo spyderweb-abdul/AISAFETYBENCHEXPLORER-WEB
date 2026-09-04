@@ -9,10 +9,16 @@ export default function AuditLogPage() {
   useEffect(() => { fetchAuditLog().then(setEntries); }, []);
 
   return (
-    <div className="container">
-      <h2>Audit Log</h2>
+    <main className="admin-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Catalogue administration</p>
+          <h1>Audit log</h1>
+          <p className="page-description">A read-only record of catalogue and configuration changes.</p>
+        </div>
+      </header>
       <div className="card">
-        <table>
+        <div className="table-scroll"><table>
           <thead>
             <tr><th>Time</th><th>Table</th><th>Action</th><th>Record ID</th><th>Diff</th></tr>
           </thead>
@@ -23,12 +29,12 @@ export default function AuditLogPage() {
                 <td>{e.table_name}</td>
                 <td>{e.action}</td>
                 <td>{e.record_id.slice(0, 8)}...</td>
-                <td><pre style={{ whiteSpace: "pre-wrap", fontSize: 11 }}>{JSON.stringify(e.diff, null, 2)}</pre></td>
+                <td><pre className="code-block">{JSON.stringify(e.diff, null, 2)}</pre></td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
-    </div>
+    </main>
   );
 }

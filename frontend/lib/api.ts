@@ -347,6 +347,70 @@ export interface ResearchGapHeatmap {
   dimensions: HeatmapDimension[];
 }
 
+export interface CatalogueSummary {
+  total_benchmarks: number;
+  popular: number;
+  high: number;
+  medium: number;
+  average_metrics_per_benchmark: number;
+  average_citations: number;
+  code_and_data_coverage_percent: number;
+}
+
+export interface CategoryCount {
+  label: string;
+  count: number;
+  share_percent: number;
+}
+
+export interface PublicationYear {
+  year: number;
+  count: number;
+  year_over_year_percent: number | null;
+}
+
+export interface CitationLeader {
+  benchmark_id: string;
+  benchmark_name: string;
+  citations: number;
+  complexity_level: string;
+}
+
+export interface RepositoryHealth {
+  status: string;
+  github: number;
+  hugging_face: number;
+}
+
+export interface CatalogueReportsData {
+  total_benchmarks: number;
+  undated_benchmarks: number;
+  publication_trend: PublicationYear[];
+  complexity_distribution: CategoryCount[];
+  task_types: CategoryCount[];
+  evaluation_metrics: CategoryCount[];
+  citation_leaders: CitationLeader[];
+  repository_health: RepositoryHealth[];
+  github_star_distribution: CategoryCount[];
+  language_coverage: CategoryCount[];
+  modality_coverage: CategoryCount[];
+  license_distribution: CategoryCount[];
+  creation_methodology: CategoryCount[];
+  development_purpose: CategoryCount[];
+  use_case_distribution: CategoryCount[];
+  research_gaps: HeatmapDimension[];
+}
+
+export async function getCatalogueSummary() {
+  const { data } = await api.get<CatalogueSummary>("/stats/catalogue-summary");
+  return data;
+}
+
+export async function getCatalogueReports() {
+  const { data } = await api.get<CatalogueReportsData>("/stats/catalogue-reports");
+  return data;
+}
+
 export async function getResearchGapHeatmap() {
   const { data } = await api.get("/stats/research-gap-heatmap");
   return data;

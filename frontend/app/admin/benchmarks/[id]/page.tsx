@@ -27,11 +27,17 @@ export default function EditBenchmarkPage() {
     getBenchmark(id).then(setBenchmark);
   }, [id]);
 
-  if (!benchmark) return <div className="container"><p>Loading...</p></div>;
+  if (!benchmark) return <main className="admin-page"><div className="browse-state" role="status">Loading benchmark record.</div></main>;
 
   return (
-    <div className="container">
-      <h2>Edit: {benchmark.benchmark_name}</h2>
+    <main className="admin-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Catalogue administration</p>
+          <h1>Edit benchmark</h1>
+          <p className="page-description">{benchmark.benchmark_name}</p>
+        </div>
+      </header>
 
       {/* FIX (2026-08-23): review action now lives directly on this
           page, since status was never editable via BenchmarkForm and
@@ -54,6 +60,6 @@ export default function EditBenchmarkPage() {
       {/* Phase 6 item 2: full version history, read-only, reusing the
           existing audit_log table (populated since Phase 2). */}
       <VersionHistoryPanel benchmarkId={id} />
-    </div>
+    </main>
   );
 }

@@ -22,12 +22,12 @@ import {
   submitExtractionJob,
 } from "../../../lib/api";
 
-const STATUS_COLORS: Record<string, string> = {
-  queued: "bg-gray-200 text-gray-700",
-  running: "bg-blue-100 text-blue-700",
-  done: "bg-green-100 text-green-700",
-  failed: "bg-red-100 text-red-700",
-  needs_review: "bg-yellow-100 text-yellow-800",
+const STATUS_CLASS: Record<string, string> = {
+  queued: "extraction-status extraction-status--queued",
+  running: "extraction-status extraction-status--running",
+  done: "extraction-status extraction-status--done",
+  failed: "extraction-status extraction-status--failed",
+  needs_review: "extraction-status extraction-status--needs_review",
 };
 
 function formatCost(cost: number | string | null | undefined): string {
@@ -186,14 +186,16 @@ export default function ExtractionPage() {
 
   return (
     <div className="extraction-page">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Agent Extraction Panel</h1>
-        <Link href="/admin/models" className="text-sm text-indigo-600 hover:underline">
-          Manage models &rarr;
-        </Link>
-      </div>
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Agent operations</p>
+          <h1>Agent extraction</h1>
+          <p className="page-description">Create, review, and cost-check benchmark extraction jobs.</p>
+        </div>
+        <Link href="/admin/models" className="button secondary">Manage models</Link>
+      </header>
 
-      <section className="bg-white rounded-lg border p-5 mb-8 shadow-sm">
+      <section className="card">
         <div className="extraction-section-header">
           <div>
             <h2>Submit New Extraction Job</h2>
@@ -210,7 +212,7 @@ export default function ExtractionPage() {
         </div>
 
         {showSubmissionForm && (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit}>
             <div className="model-create-row extraction-create-row">
               <div className="model-create-field extraction-field--type">
                 <label htmlFor="source-type">Source Type</label>
@@ -284,65 +286,66 @@ export default function ExtractionPage() {
               </div>
             </div>
             {submitError && (
-              <p className="text-red-600 text-sm">{submitError}</p>
+              <p className="error">{submitError}</p>
             )}
           </form>
         )}
       </section>
 
       {pendingJobs.length > 0 && (
-        <section className="bg-yellow-50 border border-yellow-200 rounded-lg p-5 mb-8 shadow-sm">
-          <h2 className="text-lg font-semibold mb-4 text-yellow-900">Pending Review ({pendingJobs.length})</h2>
-          <div className="space-y-4">
+        <section className="card extraction-review-queue">
+          <h2 className="detail-section-title">Pending review <span className="metadata-tags-empty">{pendingJobs.length}</span></h2>
+          <div className="extraction-review-list">
             {pendingJobs.map((job) => (
-              <div key={job.id} className="bg-white rounded border p-4">
-                <div className="flex justify-between items-start flex-wrap gap-2">
+              <article key={job.id} className="extraction-review-item">
+                <div className="extraction-review-item-header">
                   <div>
-                    <p className="text-sm font-medium">{job.source_type}: {job.source_value}</p>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="extraction-review-source">{job.source_type}: {job.source_value}</p>
+                    <p className="extraction-review-meta">
                       Model: {job.model_used} | Quality: {job.quality_score !== null ? (Number(job.quality_score) * 100).toFixed(0) + "%" : "N/A"}
                       {" "}| {job.requires_review ? (
-                        <span className="text-yellow-700 font-medium">Flagged for review (below 75% quality)</span>
+                        <span className="extraction-review-warning">Flagged for review (below 75% quality)</span>
                       ) : (
-                        <span className="text-green-700">High quality -- review is a formality, not a correction</span>
+                        <span className="extraction-review-positive">High quality: review is a formality, not a correction</span>
                       )}
                     </p>
                     {job.result_benchmark_id && (
-                      <p className="text-xs mt-1">
-                        <Link href={`/admin/benchmarks/${job.result_benchmark_id}`} className="text-indigo-600 hover:underline">
-                          Inspect full benchmark fields before deciding &rarr;
+                      <p className="extraction-review-link">
+                        <Link href={`/admin/benchmarks/${job.result_benchmark_id}`}>
+                          Inspect benchmark fields before deciding →
                         </Link>
                       </p>
                     )}
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded font-medium ${STATUS_COLORS[job.status] ?? "bg-gray-100"}`}>
+                  <span className={STATUS_CLASS[job.status] ?? "extraction-status"}>
                     job: {job.status}
                   </span>
                 </div>
-                <div className="mt-3 flex gap-2 flex-wrap items-center">
+                <div className="extraction-review-actions">
                   <input
                     type="text"
                     placeholder="Reviewer note (optional)"
                     value={reviewNote[job.id] || ""}
                     onChange={(e) => setReviewNote((prev) => ({ ...prev, [job.id]: e.target.value }))}
-                    className="border rounded px-3 py-1.5 text-xs flex-1 min-w-40"
                   />
                   <button
+                    type="button"
                     onClick={() => handleReview(job.id, true)}
                     disabled={reviewingId === job.id}
-                    className="bg-green-600 text-white px-4 py-1.5 rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50"
+                    className="success"
                   >
                     Approve
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleReview(job.id, false)}
                     disabled={reviewingId === job.id}
-                    className="bg-red-600 text-white px-4 py-1.5 rounded text-xs font-medium hover:bg-red-700 disabled:opacity-50"
+                    className="danger"
                   >
                     Reject
                   </button>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         </section>

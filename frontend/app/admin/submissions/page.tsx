@@ -1,15 +1,3 @@
-// Destination path: frontend/app/admin/submissions/page.tsx
-// Replaces the existing file in full.
-//
-// FIX (2026-09-02): same Next.js prerender failure as submit/page.tsx
-// -- useSearchParams() (from the notification-highlight fix) must be
-// wrapped in a <Suspense> boundary or `next build` fails at the
-// prerender step for this route too. All logic depending on
-// searchParams is moved into a new inner component,
-// AdminSubmissionsPageInner; the default export renders
-// <Suspense><AdminSubmissionsPageInner /></Suspense>. No behavior
-// changed otherwise.
-
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -24,25 +12,24 @@ import {
   reviewSubmission,
 } from "../../../lib/api";
 
-const STATUS_BADGE_STYLE: Record<string, { background: string; color: string }> = {
-  submitted: { background: "#e5e5e5", color: "#444" },
-  extracting: { background: "#e0e7ff", color: "#3730a3" },
-  pending_review: { background: "#fef3c7", color: "#92400e" },
-  approved: { background: "#dcfce7", color: "#166534" },
-  rejected: { background: "#fee2e2", color: "#991b1b" },
-  failed: { background: "#fee2e2", color: "#991b1b" },
-  needs_better_extraction: { background: "#fde68a", color: "#78350f" },
+const STATUS_BADGE_CLASS: Record<string, string> = {
+  submitted: "status-tag",
+  extracting: "status-tag status-tag--info",
+  pending_review: "status-tag status-tag--warning",
+  approved: "status-tag status-tag--success",
+  rejected: "status-tag status-tag--danger",
+  failed: "status-tag status-tag--danger",
+  needs_better_extraction: "status-tag status-tag--warning",
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const style = STATUS_BADGE_STYLE[status] || { background: "#e5e5e5", color: "#444" };
-  return <span className="badge" style={style}>{status.replaceAll("_", " ")}</span>;
+  return <span className={STATUS_BADGE_CLASS[status] ?? "status-tag"}>{status.replaceAll("_", " ")}</span>;
 }
 
 function DomainCheckBadge({ passed }: { passed: boolean | null }) {
-  if (passed === true) return <span className="badge" style={{ background: "#dcfce7", color: "#166534" }}>Domain OK</span>;
-  if (passed === false) return <span className="badge" style={{ background: "#fee2e2", color: "#991b1b" }}>Domain mismatch</span>;
-  return <span className="badge" style={{ background: "#fef3c7", color: "#92400e" }}>Borderline</span>;
+  if (passed === true) return <span className="status-tag status-tag--success">Domain OK</span>;
+  if (passed === false) return <span className="status-tag status-tag--danger">Domain mismatch</span>;
+  return <span className="status-tag status-tag--warning">Borderline</span>;
 }
 
 function AdminSubmissionsPageInner() {
@@ -57,24 +44,18 @@ function AdminSubmissionsPageInner() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
-
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
-
-  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const rowRefs = useRef<Record<string, HTMLElement | null>>({});
 
   useEffect(() => {
-    if (highlightId) {
-      setStatusFilter("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (highlightId) setStatusFilter("");
   }, [highlightId]);
 
   async function load() {
     setLoading(true);
     try {
-      const data = await listAllSubmissions(statusFilter || undefined);
-      setSubmissions(data);
+      setSubmissions(await listAllSubmissions(statusFilter || undefined));
     } catch {
       setError("Failed to load submissions.");
     } finally {
@@ -85,27 +66,16 @@ function AdminSubmissionsPageInner() {
   useEffect(() => { load(); }, [statusFilter]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const data = await listModels(true);
-        setModels(data);
-      } catch {
-        setModelsError(
-          "Failed to load models -- add models at /admin/models, or check that the models API is reachable.",
-        );
-      }
-    })();
+    listModels(true)
+      .then(setModels)
+      .catch(() => setModelsError("Failed to load models. Add a model at /admin/models, or check that the models API is reachable."));
   }, []);
 
   useEffect(() => {
-    if (!highlightId || loading) return;
-    const found = submissions.some((s) => s.id === highlightId);
-    if (!found) return;
+    if (!highlightId || loading || !submissions.some((submission) => submission.id === highlightId)) return;
 
     setHighlightedId(highlightId);
-    const el = rowRefs.current[highlightId];
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
-
+    rowRefs.current[highlightId]?.scrollIntoView({ behavior: "smooth", block: "center" });
     const timer = setTimeout(() => setHighlightedId(null), 4000);
     return () => clearTimeout(timer);
   }, [highlightId, loading, submissions]);
@@ -131,7 +101,7 @@ function AdminSubmissionsPageInner() {
   async function handleReextract(id: string) {
     const model = reextractModelById[id] || models[0]?.identifier;
     if (!model) {
-      setError("No active model available -- add one at /admin/models before re-extracting.");
+      setError("No active model is available. Add one at /admin/models before re-extracting.");
       return;
     }
     setBusyId(id);
@@ -147,119 +117,103 @@ function AdminSubmissionsPageInner() {
   }
 
   return (
-    <div className="container">
-      <div className="topbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2>Community Submissions</h2>
-        <Link href="/admin/models" style={{ fontSize: 13 }}>Manage models &rarr;</Link>
-      </div>
+    <main className="admin-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Community governance</p>
+          <h1>Community submissions</h1>
+          <p className="page-description">Review researcher-submitted benchmark papers and direct re-extraction when needed.</p>
+        </div>
+        <Link href="/admin/models" className="button secondary">Manage models</Link>
+      </header>
 
-      <div className="card" style={{ display: "flex", gap: 12 }}>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="">All statuses</option>
-          <option value="pending_review">Pending review</option>
-          <option value="needs_better_extraction">Needs better extraction</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-          <option value="failed">Failed</option>
-        </select>
-      </div>
+      <section className="card" aria-label="Submission filters">
+        <div className="admin-toolbar">
+          <label htmlFor="submission-status-filter" className="sr-only">Filter submissions by status</label>
+          <select id="submission-status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="">All statuses</option>
+            <option value="pending_review">Pending review</option>
+            <option value="needs_better_extraction">Needs better extraction</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="failed">Failed</option>
+          </select>
+          <button className="secondary" type="button" onClick={load}>Refresh</button>
+        </div>
+      </section>
 
       {error && <p className="error">{error}</p>}
       {modelsError && <p className="error">{modelsError}</p>}
 
       {loading ? (
-        <p>Loading...</p>
+        <div className="browse-state" role="status">Loading submissions.</div>
       ) : submissions.length === 0 ? (
-        <p style={{ color: "#666" }}>No submissions match this filter.</p>
+        <div className="card"><p className="muted-copy">No submissions match this filter.</p></div>
       ) : (
-        submissions.map((s) => (
-          <div
-            key={s.id}
-            ref={(el) => { rowRefs.current[s.id] = el; }}
-            className="card"
-            style={
-              highlightedId === s.id
-                ? { boxShadow: "0 0 0 3px #6366f1", transition: "box-shadow 0.3s ease" }
-                : undefined
-            }
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <strong>{s.source_value}</strong>{" "}
-                <StatusBadge status={s.status} />{" "}
-                {s.domain_check_reason && <DomainCheckBadge passed={s.domain_check_passed} />}
-              </div>
-              {s.result_benchmark_id && (
-                <Link href={`/admin/benchmarks/${s.result_benchmark_id}`}>View extracted benchmark &rarr;</Link>
-              )}
-            </div>
-
-            <p style={{ fontSize: 13, color: "#666" }}>
-              Model: {s.model_used} | Quality score: {s.quality_score != null ? s.quality_score.toFixed(2) : "-"} |
-              Submitted: {new Date(s.created_at).toLocaleString()}
-            </p>
-
-            {s.domain_check_reason && (
-              <p style={{ fontSize: 13, color: "#444", background: "#f9fafb", padding: 8, borderRadius: 6 }}>
-                {s.domain_check_reason}
-              </p>
-            )}
-
-            {s.admin_review_notes && (
-              <p style={{ fontSize: 13, color: "#444" }}>
-                <strong>Previous reviewer notes:</strong> {s.admin_review_notes}
-              </p>
-            )}
-
-            {s.status === "pending_review" && (
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap", marginTop: 8 }}>
-                <textarea
-                  placeholder="Reviewer notes (required for decline / request better extraction, optional for approve)"
-                  value={notesById[s.id] || ""}
-                  onChange={(e) => setNotesById((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                  rows={2}
-                  style={{ flex: 1, minWidth: 260 }}
-                />
-                <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
-                  <button onClick={() => handleReview(s.id, "approve")} disabled={busyId === s.id}>Approve</button>
-                  <button className="danger" onClick={() => handleReview(s.id, "reject")} disabled={busyId === s.id}>Decline</button>
-                  <button className="secondary" onClick={() => handleReview(s.id, "needs_better_extraction")} disabled={busyId === s.id}>
-                    Needs Better Extraction
-                  </button>
+        <section className="submission-list" aria-label="Community submissions">
+          {submissions.map((submission) => (
+            <article
+              key={submission.id}
+              ref={(element) => { rowRefs.current[submission.id] = element; }}
+              className={highlightedId === submission.id ? "card submission-card submission-highlighted" : "card submission-card"}
+            >
+              <header className="submission-card-header">
+                <div>
+                  <h2 className="submission-source">{submission.source_value}</h2>
+                  <div className="submission-badges">
+                    <StatusBadge status={submission.status} />
+                    {submission.domain_check_reason && <DomainCheckBadge passed={submission.domain_check_passed} />}
+                  </div>
                 </div>
-              </div>
-            )}
+                {submission.result_benchmark_id && <Link href={`/admin/benchmarks/${submission.result_benchmark_id}`} className="button secondary">View benchmark</Link>}
+              </header>
 
-            {s.status === "needs_better_extraction" && (
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                <select
-                  value={reextractModelById[s.id] || models[0]?.identifier || ""}
-                  onChange={(e) => setReextractModelById((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                  disabled={models.length === 0}
-                >
-                  {models.length === 0 && <option value="">No active models</option>}
-                  {models.map((m) => (
-                    <option key={m.id} value={m.identifier}>
-                      {m.display_name ? `${m.display_name} (${m.identifier})` : m.identifier}
-                    </option>
-                  ))}
-                </select>
-                <button onClick={() => handleReextract(s.id)} disabled={busyId === s.id || models.length === 0}>
-                  Run Re-extraction
-                </button>
-              </div>
-            )}
-          </div>
-        ))
+              <p className="submission-meta">
+                Model: {submission.model_used} · Quality score: {submission.quality_score != null ? submission.quality_score.toFixed(2) : "Not available"} · Submitted: {new Date(submission.created_at).toLocaleString()}
+              </p>
+
+              {submission.domain_check_reason && <p className="submission-domain-note">{submission.domain_check_reason}</p>}
+              {submission.admin_review_notes && <p className="submission-review-note"><strong>Previous reviewer notes:</strong> {submission.admin_review_notes}</p>}
+
+              {submission.status === "pending_review" && (
+                <div className="submission-review-actions">
+                  <textarea
+                    aria-label={`Reviewer notes for ${submission.source_value}`}
+                    placeholder="Reviewer notes: required for decline or a better extraction request"
+                    value={notesById[submission.id] || ""}
+                    onChange={(event) => setNotesById((current) => ({ ...current, [submission.id]: event.target.value }))}
+                    rows={2}
+                  />
+                  <div className="submission-action-buttons">
+                    <button type="button" onClick={() => handleReview(submission.id, "approve")} disabled={busyId === submission.id}>Approve</button>
+                    <button type="button" className="danger" onClick={() => handleReview(submission.id, "reject")} disabled={busyId === submission.id}>Decline</button>
+                    <button type="button" className="secondary" onClick={() => handleReview(submission.id, "needs_better_extraction")} disabled={busyId === submission.id}>Request better extraction</button>
+                  </div>
+                </div>
+              )}
+
+              {submission.status === "needs_better_extraction" && (
+                <div className="submission-reextract-actions">
+                  <select
+                    aria-label={`Model for re-extracting ${submission.source_value}`}
+                    value={reextractModelById[submission.id] || models[0]?.identifier || ""}
+                    onChange={(event) => setReextractModelById((current) => ({ ...current, [submission.id]: event.target.value }))}
+                    disabled={models.length === 0}
+                  >
+                    {models.length === 0 && <option value="">No active models</option>}
+                    {models.map((model) => <option key={model.id} value={model.identifier}>{model.display_name ? `${model.display_name} (${model.identifier})` : model.identifier}</option>)}
+                  </select>
+                  <button type="button" onClick={() => handleReextract(submission.id)} disabled={busyId === submission.id || models.length === 0}>Run re-extraction</button>
+                </div>
+              )}
+            </article>
+          ))}
+        </section>
       )}
-    </div>
+    </main>
   );
 }
 
 export default function AdminSubmissionsPage() {
-  return (
-    <Suspense fallback={<div className="container"><p>Loading...</p></div>}>
-      <AdminSubmissionsPageInner />
-    </Suspense>
-  );
+  return <Suspense fallback={<main className="admin-page"><div className="browse-state" role="status">Loading submissions.</div></main>}><AdminSubmissionsPageInner /></Suspense>;
 }

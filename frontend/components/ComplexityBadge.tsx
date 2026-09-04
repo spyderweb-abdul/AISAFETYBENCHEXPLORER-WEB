@@ -20,7 +20,7 @@ export default function ComplexityBadge({
   level: string;
   justification?: string | null;
 }) {
-  const cls = `badge badge-${level.toLowerCase()}`;
+  const cls = `badge complexity-badge badge-${level.toLowerCase()}`;
   return (
     <span className={cls} title={justification || undefined}>
       {level}

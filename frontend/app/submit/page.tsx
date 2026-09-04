@@ -20,19 +20,18 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Cookies from "js-cookie";
 import { Submission, createSubmission, fetchMe, listMySubmissions } from "../../lib/api";
 
-const STATUS_BADGE_STYLE: Record<string, { background: string; color: string }> = {
-  submitted: { background: "#e5e5e5", color: "#444" },
-  extracting: { background: "#e0e7ff", color: "#3730a3" },
-  pending_review: { background: "#fef3c7", color: "#92400e" },
-  approved: { background: "#dcfce7", color: "#166534" },
-  rejected: { background: "#fee2e2", color: "#991b1b" },
-  failed: { background: "#fee2e2", color: "#991b1b" },
-  needs_better_extraction: { background: "#fde68a", color: "#78350f" },
+const STATUS_BADGE_CLASS: Record<string, string> = {
+  submitted: "status-tag",
+  extracting: "status-tag status-tag--info",
+  pending_review: "status-tag status-tag--warning",
+  approved: "status-tag status-tag--success",
+  rejected: "status-tag status-tag--danger",
+  failed: "status-tag status-tag--danger",
+  needs_better_extraction: "status-tag status-tag--warning",
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const style = STATUS_BADGE_STYLE[status] || { background: "#e5e5e5", color: "#444" };
-  return <span className="badge" style={style}>{status.replaceAll("_", " ")}</span>;
+  return <span className={STATUS_BADGE_CLASS[status] ?? "status-tag"}>{status.replaceAll("_", " ")}</span>;
 }
 
 function SubmitPageInner() {
@@ -122,19 +121,25 @@ function SubmitPageInner() {
   if (!allowed) return null;
 
   return (
-    <div className="container">
-      <h1>Submit a Benchmark</h1>
-      <p style={{ color: "#666", fontSize: 13 }}>
+    <main className="container">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Researcher submission</p>
+          <h1>Submit a benchmark</h1>
+        </div>
+      </header>
+      <p className="submit-page-intro">
         Submit a DOI for a paper describing an AI safety benchmark. It will be
         automatically extracted and checked for domain relevance and
         extraction quality, then queued for admin review. You'll be notified
         here and by email once a decision is made.
       </p>
 
-      <form onSubmit={handleSubmit} className="card" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-        <div className="field" style={{ flex: 1, minWidth: 260 }}>
-          <label>DOI</label>
+      <form onSubmit={handleSubmit} className="card submit-form">
+        <div className="field">
+          <label htmlFor="submission-doi">DOI</label>
           <input
+            id="submission-doi"
             value={doi}
             onChange={(e) => setDoi(e.target.value)}
             placeholder="e.g. 10.1073/pnas.2416228122"
@@ -144,17 +149,17 @@ function SubmitPageInner() {
         </div>
         <button type="submit" disabled={submitting}>{submitting ? "Submitting..." : "Submit for Review"}</button>
       </form>
-      {notice && <p style={{ color: "#166534", fontSize: 13 }}>{notice}</p>}
+      {notice && <p className="submit-notice">{notice}</p>}
       {error && <p className="error">{error}</p>}
 
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Your Submissions</h3>
+        <h2 className="detail-section-title">Your submissions</h2>
         {loading ? (
           <p>Loading...</p>
         ) : submissions.length === 0 ? (
-          <p style={{ color: "#666", fontSize: 13 }}>You haven't submitted any benchmarks yet.</p>
+          <p className="muted-copy">You have not submitted any benchmarks yet.</p>
         ) : (
-          <table>
+          <div className="table-scroll"><table>
             <thead>
               <tr>
                 <th>Source</th>
@@ -170,28 +175,24 @@ function SubmitPageInner() {
                 <tr
                   key={s.id}
                   ref={(el) => { rowRefs.current[s.id] = el; }}
-                  style={
-                    highlightedId === s.id
-                      ? { boxShadow: "inset 0 0 0 2px #6366f1", transition: "box-shadow 0.3s ease" }
-                      : undefined
-                  }
+                  className={highlightedId === s.id ? "row-highlighted" : undefined}
                 >
                   <td>{s.source_value}</td>
                   <td><StatusBadge status={s.status} /></td>
                   <td>{s.quality_score != null ? s.quality_score.toFixed(2) : "-"}</td>
-                  <td style={{ fontSize: 12, maxWidth: 240 }}>
+                  <td>
                     {s.domain_check_passed === true ? "Passed" : s.domain_check_passed === false ? "Failed" : s.domain_check_passed === null && s.domain_check_reason ? "Borderline" : "-"}
-                    {s.domain_check_reason && <div style={{ color: "#888" }}>{s.domain_check_reason}</div>}
+                    {s.domain_check_reason && <div className="metadata-tags-empty">{s.domain_check_reason}</div>}
                   </td>
-                  <td style={{ fontSize: 12, maxWidth: 240 }}>{s.admin_review_notes || "-"}</td>
-                  <td style={{ fontSize: 12 }}>{new Date(s.created_at).toLocaleString()}</td>
+                  <td>{s.admin_review_notes || "-"}</td>
+                  <td>{new Date(s.created_at).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
-    </div>
+    </main>
   );
 }
 

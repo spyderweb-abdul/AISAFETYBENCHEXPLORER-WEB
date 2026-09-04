@@ -129,9 +129,9 @@ export default function RepoStatsPanel({
   return (
     <div className="card">
       <div className="topbar">
-        <h3 style={{ margin: 0 }}>Repository Activity Statistics</h3>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ fontWeight: 400, fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
+        <h2>Repository activity statistics</h2>
+        <div className="admin-toolbar">
+          <label className="vocab-review-filter">
             <input
               type="checkbox"
               checked={showHistory}
@@ -152,19 +152,7 @@ export default function RepoStatsPanel({
       </div>
 
       {/* Roadmap item 14: GitHub API quota readout */}
-      <div
-        style={{
-          marginBottom: 12,
-          padding: "8px 12px",
-          borderRadius: 6,
-          fontSize: 12,
-          background: quotaLow ? "#fee2e2" : "#f3f4f6",
-          color: quotaLow ? "#991b1b" : "#444",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+      <div className={quotaLow ? "quota-panel quota-low" : "quota-panel"}>
         {quotaLoading ? (
           <span>Checking GitHub API quota...</span>
         ) : quotaError ? (
@@ -179,19 +167,19 @@ export default function RepoStatsPanel({
         ) : (
           <span>GitHub API quota unknown.</span>
         )}
-        <button type="button" className="secondary" onClick={loadQuota} disabled={quotaLoading} style={{ fontSize: 12, padding: "2px 8px" }}>
+        <button type="button" className="secondary notification-small-button" onClick={loadQuota} disabled={quotaLoading}>
           Recheck
         </button>
       </div>
 
       {!hasAnyRepo && (
-        <p style={{ color: "#666", fontSize: 13 }}>
+        <p className="muted-copy">
           This benchmark has no code_repository or dataset_repository set, so there is nothing to refresh.
         </p>
       )}
 
       {notice && (
-        <div className="badge badge-medium" style={{ display: "block", marginBottom: 12, padding: "8px 10px" }}>
+        <div className="notice">
           {notice}
         </div>
       )}
@@ -199,13 +187,13 @@ export default function RepoStatsPanel({
       {error && <p className="error">{error}</p>}
 
       {loading ? (
-        <p>Loading repository activity statistics...</p>
+        <p className="muted-copy">Loading repository activity statistics...</p>
       ) : stats.length === 0 ? (
-        <p style={{ color: "#666", fontSize: 13 }}>
+        <p className="muted-copy">
           No repository activity statistics recorded yet for this benchmark.
         </p>
       ) : (
-        <table>
+        <div className="table-scroll"><table>
           <thead>
             <tr>
               <th>Source</th>
@@ -231,16 +219,16 @@ export default function RepoStatsPanel({
                 <td>{row.is_archived ? "Yes" : "No"}</td>
                 <td>{row.license_id ?? "-"}</td>
                 <td>{new Date(row.fetched_at).toLocaleString()}</td>
-                <td style={{ color: row.fetch_error ? "#b91c1c" : "#999" }}>
+                <td className={row.fetch_error ? "repo-fetch-error" : "metadata-tags-empty"}>
                   {row.fetch_error ?? "-"}
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       {showHistory && stats.length > 0 && (
-        <p style={{ color: "#666", fontSize: 12, marginTop: 8 }}>
+        <p className="muted-copy">
           Showing full history ({stats.length} snapshot{stats.length === 1 ? "" : "s"} across all sources). Uncheck &quot;Show full history&quot; to see only the latest per source.
         </p>
       )}

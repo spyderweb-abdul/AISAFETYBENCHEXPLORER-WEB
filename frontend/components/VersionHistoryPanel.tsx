@@ -86,15 +86,15 @@ export default function VersionHistoryPanel({ benchmarkId }: Props) {
 
   return (
     <div className="card">
-      <h3 style={{ marginTop: 0 }}>Version History</h3>
+      <h2 className="detail-section-title">Version history</h2>
       {loading ? (
         <p>Loading...</p>
       ) : error ? (
         <p className="error">{error}</p>
       ) : entries.length === 0 ? (
-        <p style={{ color: "#666", fontSize: 13 }}>No recorded changes for this benchmark yet.</p>
+        <p className="muted-copy">No recorded changes for this benchmark yet.</p>
       ) : (
-        <table>
+        <div className="table-scroll"><table>
           <thead>
             <tr>
               <th>When</th>
@@ -107,9 +107,9 @@ export default function VersionHistoryPanel({ benchmarkId }: Props) {
             {entries.map((entry) => (
               <Fragment key={entry.id}>
                 <tr>
-                  <td style={{ fontSize: 13 }}>{new Date(entry.created_at).toLocaleString()}</td>
+                  <td>{new Date(entry.created_at).toLocaleString()}</td>
                   <td><ActionBadge action={entry.action} /></td>
-                  <td style={{ fontSize: 13, color: entry.changed_by ? "inherit" : "#888" }}>
+                  <td className={entry.changed_by ? undefined : "metadata-tags-empty"}>
                     {entry.changed_by ?? "System"}
                   </td>
                   <td>
@@ -124,12 +124,7 @@ export default function VersionHistoryPanel({ benchmarkId }: Props) {
                 {expandedId === entry.id && (
                   <tr>
                     <td colSpan={4}>
-                      <pre
-                        style={{
-                          background: "#f9fafb", padding: 10, borderRadius: 6,
-                          fontSize: 12, overflowX: "auto", margin: 0,
-                        }}
-                      >
+                      <pre className="code-block">
                         {JSON.stringify(entry.diff, null, 2)}
                       </pre>
                     </td>
@@ -138,7 +133,7 @@ export default function VersionHistoryPanel({ benchmarkId }: Props) {
               </Fragment>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );

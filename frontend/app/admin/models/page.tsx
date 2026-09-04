@@ -195,7 +195,7 @@ export default function AdminModelsPage() {
         </div>
       </div>
 
-      <section className="bg-white rounded-lg border p-5 mb-8 shadow-sm">
+      <section className="card">
         <div className="models-section-header">
           <div>
             <h2>Add Model</h2>
@@ -296,12 +296,12 @@ export default function AdminModelsPage() {
         )}
       </section>
 
-      <section className="bg-white rounded-lg border p-5 shadow-sm">
-        <h2 className="text-lg font-semibold mb-4">All Models</h2>
-        {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
-        {loading && <p className="text-sm text-gray-500">Loading...</p>}
+      <section className="card">
+        <h2 className="detail-section-title">All models</h2>
+        {error && <p className="error">{error}</p>}
+        {loading && <p className="muted-copy">Loading...</p>}
         {!loading && models.length === 0 && (
-          <p className="text-sm text-gray-500">No models yet -- add one above.</p>
+          <p className="muted-copy">No models yet. Add one above.</p>
         )}
         <div className="models-toolbar">
           <input

@@ -46,44 +46,59 @@ export default function AppHeader() {
     router.push("/login");
   }
 
+  function navClass(href: string) {
+    const isBrowseCatalogue =
+      href === "/browse" &&
+      (pathname === "/browse" || (pathname.startsWith("/browse/") && pathname !== "/browse/heatmap"));
+
+    return isBrowseCatalogue || pathname === href || (href !== "/browse" && pathname.startsWith(`${href}/`))
+      ? "site-nav-link site-nav-link-active"
+      : "site-nav-link";
+  }
+
   if (!checked) return null;
 
   return (
-    <div
-      style={{
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        padding: "10px 16px", borderBottom: "1px solid #e5e5e5", flexWrap: "wrap", gap: 8,
-      }}
-    >
-      <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-        <Link href="/browse" style={{ fontWeight: 600 }}>AISafetyBenchExplorer</Link>
+    <header className="site-header">
+      <div className="site-header-inner">
+        <Link href="/browse" className="site-brand" aria-label="AISafetyBenchExplorer catalogue">
+          <span className="site-brand-mark" aria-hidden="true" />
+          <span>AISafetyBenchExplorer</span>
+        </Link>
+
+        <nav className="site-nav" aria-label="Primary navigation">
+          <Link href="/browse" className={navClass("/browse")}>Catalogue</Link>
+          <Link href="/browse/heatmap" className={navClass("/browse/heatmap")}>Research gaps</Link>
         {user?.role === "admin" && (
           <>
-            <Link href="/admin/benchmarks">Benchmarks</Link>
-            <Link href="/admin/extraction">Agent Extraction</Link>
-            <Link href="/admin/submissions">Community Submissions</Link>
-            <Link href="/admin/models">Models</Link>
-            <Link href="/admin/vocab">Vocabulary</Link>
+            <Link href="/admin/benchmarks" className={navClass("/admin/benchmarks")}>Manage benchmarks</Link>
+            <Link href="/admin/extraction" className={navClass("/admin/extraction")}>Extraction</Link>
+            <Link href="/admin/submissions" className={navClass("/admin/submissions")}>Submissions</Link>
+            <Link href="/admin/models" className={navClass("/admin/models")}>Models</Link>
+            <Link href="/admin/vocab" className={navClass("/admin/vocab")}>Vocabulary</Link>
           </>
         )}
-        {user?.role === "researcher" && <Link href="/submit">Submit a Benchmark</Link>}
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {user?.role === "researcher" && <Link href="/submit" className={navClass("/submit")}>Submit a benchmark</Link>}
+        </nav>
+
+        <div className="site-account">
         {user ? (
           <>
-            <span style={{ fontSize: 12, color: "#666" }}>
-              {user.email} ({user.role})
+            <span className="site-user" title={user.email}>
+              <span className="site-user-status" aria-hidden="true" />
+              {user.role}
             </span>
             <NotificationBell />
             <button className="secondary" onClick={handleLogout}>Log out</button>
           </>
         ) : (
           <>
-            <Link href="/login"><button className="secondary">Log in</button></Link>
-            <Link href="/signup"><button>Sign up</button></Link>
+            <Link href="/login" className="button secondary">Log in</Link>
+            <Link href="/signup" className="button">Sign up</Link>
           </>
         )}
+        </div>
       </div>
-    </div>
+    </header>
   );
 }

@@ -146,7 +146,7 @@ export default function EvalMetricsPanel({
   function renderDraftFields() {
     return (
       <div className="form-grid">
-        <div className="field" style={{ gridColumn: "1 / -1" }}>
+        <div className="field field-full">
           <label>Metric Name (exact paper terminology)</label>
           <input
             value={draft.metric_name}
@@ -154,7 +154,7 @@ export default function EvalMetricsPanel({
             required
           />
         </div>
-        <div className="field" style={{ gridColumn: "1 / -1" }}>
+        <div className="field field-full">
           <label>Conceptual Description</label>
           <textarea
             rows={2}
@@ -162,7 +162,7 @@ export default function EvalMetricsPanel({
             onChange={(e) => setDraft((prev) => ({ ...prev, conceptual_description: e.target.value }))}
           />
         </div>
-        <div className="field" style={{ gridColumn: "1 / -1" }}>
+        <div className="field field-full">
           <label>Methodological Details</label>
           <textarea
             rows={2}
@@ -170,7 +170,7 @@ export default function EvalMetricsPanel({
             onChange={(e) => setDraft((prev) => ({ ...prev, methodological_details: e.target.value }))}
           />
         </div>
-        <div className="field" style={{ gridColumn: "1 / -1" }}>
+        <div className="field field-full">
           <label>Mathematical Definition</label>
           <textarea
             rows={2}
@@ -178,7 +178,7 @@ export default function EvalMetricsPanel({
             onChange={(e) => setDraft((prev) => ({ ...prev, mathematical_definition: e.target.value }))}
           />
         </div>
-        <div className="field" style={{ gridColumn: "1 / -1" }}>
+        <div className="field field-full">
           <label>Differences From Standard Definition</label>
           <textarea
             rows={2}
@@ -188,7 +188,7 @@ export default function EvalMetricsPanel({
             }
           />
         </div>
-        <div className="field" style={{ gridColumn: "1 / -1" }}>
+        <div className="field field-full">
           <label>Notes</label>
           <textarea
             rows={2}
@@ -203,7 +203,7 @@ export default function EvalMetricsPanel({
   return (
     <div className="card">
       <div className="topbar">
-        <h3 style={{ margin: 0 }}>Evaluation Metrics Catalogue (Sheet 2)</h3>
+        <h2>Evaluation metrics catalogue</h2>
         {!showAddForm && !editingId && (
           <button type="button" onClick={() => startAdd()}>
             + Add Metric
@@ -212,17 +212,7 @@ export default function EvalMetricsPanel({
       </div>
 
       {completeness && !completeness.is_complete && (
-        <div
-          className="error"
-          style={{
-            background: "#fef3c7",
-            color: "#92400e",
-            border: "1px solid #fde68a",
-            borderRadius: 6,
-            padding: "10px 12px",
-            marginBottom: 12,
-          }}
-        >
+        <div className="metric-completeness">
           <strong>Incomplete catalogue:</strong> the following metric name(s) are listed on this
           benchmark&apos;s Evaluation Metrics field but have no catalogue row yet:{" "}
           {completeness.missing_metric_names.map((name, i) => (
@@ -230,8 +220,7 @@ export default function EvalMetricsPanel({
               {i > 0 && ", "}
               <button
                 type="button"
-                className="secondary"
-                style={{ padding: "2px 8px", fontSize: 12, marginLeft: 4 }}
+                className="secondary metric-add-missing"
                 onClick={() => startAdd(name)}
               >
                 + {name}
@@ -246,11 +235,11 @@ export default function EvalMetricsPanel({
       {loading ? (
         <p>Loading metrics...</p>
       ) : metrics.length === 0 && !showAddForm ? (
-        <p style={{ color: "#666", fontSize: 13 }}>
+        <p className="muted-copy">
           No evaluation metrics catalogued for this benchmark yet.
         </p>
       ) : (
-        <table>
+        <div className="table-scroll"><table>
           <thead>
             <tr>
               <th>Metric Name</th>
@@ -275,10 +264,10 @@ export default function EvalMetricsPanel({
               ) : (
                 <tr key={metric.id}>
                   <td>{metric.metric_name}</td>
-                  <td style={{ maxWidth: 420 }}>
-                    {metric.conceptual_description || <em style={{ color: "#999" }}>None</em>}
+                  <td className="metric-description-cell">
+                    {metric.conceptual_description || <span className="metadata-tags-empty">Not specified</span>}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  <td className="metric-actions-cell">
                     <button type="button" className="secondary" onClick={() => startEdit(metric)}>
                       Edit
                     </button>{" "}
@@ -290,12 +279,12 @@ export default function EvalMetricsPanel({
               )
             )}
           </tbody>
-        </table>
+        </table></div>
       )}
 
       {showAddForm && (
-        <div style={{ marginTop: 16, borderTop: "1px solid #eee", paddingTop: 16 }}>
-          <h4 style={{ marginTop: 0 }}>Add Metric</h4>
+        <div className="metric-add-form">
+          <h3>Add metric</h3>
           {renderDraftFields()}
           <button type="button" onClick={saveNew} disabled={saving || !draft.metric_name}>
             {saving ? "Saving..." : "Save Metric"}
