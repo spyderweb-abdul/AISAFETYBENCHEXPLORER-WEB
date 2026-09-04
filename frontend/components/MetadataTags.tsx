@@ -3,21 +3,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const TAG_PALETTE = [
-  { background: "#e0f2fe", color: "#075985", border: "#7dd3fc" },
-  { background: "#dcfce7", color: "#166534", border: "#86efac" },
-  { background: "#fef3c7", color: "#92400e", border: "#fcd34d" },
-  { background: "#fce7f3", color: "#9d174d", border: "#f9a8d4" },
-  { background: "#ede9fe", color: "#5b21b6", border: "#c4b5fd" },
-  { background: "#ccfbf1", color: "#115e59", border: "#5eead4" },
-  { background: "#ffedd5", color: "#9a3412", border: "#fdba74" },
-  { background: "#e2e8f0", color: "#334155", border: "#cbd5e1" },
-];
+  { background: "#e0f2fe", color: "#075985" },
+  { background: "#dcfce7", color: "#166534" },
+  { background: "#fef3c7", color: "#92400e" },
+  { background: "#fce7f3", color: "#9d174d" },
+  { background: "#ede9fe", color: "#5b21b6" },
+  { background: "#ccfbf1", color: "#115e59" },
+  { background: "#ffedd5", color: "#9a3412" },
+  { background: "#e2e8f0", color: "#334155" },
+] as const;
 
-const BORDER_STYLES = ["solid", "dashed", "dotted", "double"] as const;
 const MAX_COLLAPSED_ROWS = 2;
 
-function hashValue(value: string, seed = 0) {
-  let hash = 2166136261 ^ seed;
+function normalizeValue(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function hashValue(value: string) {
+  let hash = 2166136261;
 
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
@@ -27,23 +30,37 @@ function hashValue(value: string, seed = 0) {
   return hash >>> 0;
 }
 
-function getTagStyle(value: string) {
-  const normalized = value.trim().toLocaleLowerCase();
-
-  const palette =
-    TAG_PALETTE[hashValue(normalized) % TAG_PALETTE.length];
-
-  const borderStyle =
-    BORDER_STYLES[
-      hashValue(normalized, 97) % BORDER_STYLES.length
-    ];
+function tagStyle(value: string) {
+  const normalized = normalizeValue(value);
+  const palette = TAG_PALETTE[hashValue(normalized) % TAG_PALETTE.length];
 
   return {
     backgroundColor: palette.background,
-    borderColor: palette.border,
-    borderStyle,
     color: palette.color,
   };
+}
+
+interface MetadataTagProps {
+  value?: string | null;
+  className?: string;
+}
+
+export function MetadataTag({ value, className = "" }: MetadataTagProps) {
+  const cleanedValue = value?.trim();
+
+  if (!cleanedValue) {
+    return <span className="metadata-tags-empty">Not specified</span>;
+  }
+
+  return (
+    <span
+      className={`metadata-tag ${className}`.trim()}
+      style={tagStyle(cleanedValue)}
+      title={cleanedValue}
+    >
+      {cleanedValue}
+    </span>
+  );
 }
 
 interface MetadataTagsProps {
@@ -60,16 +77,10 @@ export default function MetadataTags({
   onExpandedChange,
 }: MetadataTagsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const [visibleCount, setVisibleCount] = useState(
-    values?.length ?? 0,
-  );
+  const [visibleCount, setVisibleCount] = useState(values?.length ?? 0);
 
   const tagValues = useMemo(
-    () =>
-      (values ?? [])
-        .map((value) => value.trim())
-        .filter(Boolean),
+    () => (values ?? []).map((value) => value.trim()).filter(Boolean),
     [values],
   );
 
@@ -85,10 +96,10 @@ export default function MetadataTags({
       if (!container) return;
 
       const tags = Array.from(
-        container.querySelectorAll<HTMLElement>(
-          "[data-metadata-tag]",
-        ),
+        container.querySelectorAll<HTMLElement>("[data-metadata-tag]"),
       );
+
+      if (tags.length === 0) return;
 
       const rowStarts: number[] = [];
       let count = tags.length;
@@ -134,7 +145,7 @@ export default function MetadataTags({
     ? tagValues
     : tagValues.slice(0, visibleCount);
 
-  const hiddenCount = tagValues.length - displayedValues.length;
+  const hiddenCount = Math.max(tagValues.length - displayedValues.length, 0);
 
   return (
     <div className="metadata-tags-cell">
@@ -144,7 +155,7 @@ export default function MetadataTags({
             className="metadata-tag"
             data-metadata-tag
             key={`${value}-${index}`}
-            style={getTagStyle(value)}
+            style={tagStyle(value)}
             title={value}
           >
             {value}

@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ExtractionJob,
@@ -72,6 +72,12 @@ export default function ExtractionPage() {
   const [varianceLoading, setVarianceLoading] = useState(false);
   const [varianceError, setVarianceError] = useState<string | null>(null);
 
+  const PAGE_SIZE = 15;
+
+  const [historyPage, setHistoryPage] = useState(1);
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const [showSubmissionForm, setShowSubmissionForm] = useState(true);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -88,6 +94,10 @@ export default function ExtractionPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [filterStatus]);
 
   useEffect(() => {
     (async () => {
@@ -169,9 +179,13 @@ export default function ExtractionPage() {
 
   const pendingJobs = jobs.filter((j) => j.result_benchmark_status === "pending_review");
   const otherJobs = jobs.filter((j) => j.result_benchmark_status !== "pending_review");
+  const historyPageCount = Math.max(1, Math.ceil(otherJobs.length / PAGE_SIZE),);
+  
+  const safeHistoryPage = Math.min(historyPage, historyPageCount);  
+  const paginatedJobs = otherJobs.slice((safeHistoryPage - 1) * PAGE_SIZE, safeHistoryPage * PAGE_SIZE,);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="extraction-page">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Agent Extraction Panel</h1>
         <Link href="/admin/models" className="text-sm text-indigo-600 hover:underline">
@@ -180,94 +194,100 @@ export default function ExtractionPage() {
       </div>
 
       <section className="bg-white rounded-lg border p-5 mb-8 shadow-sm">
-        <h2 className="text-lg font-semibold mb-4">Submit New Extraction Job</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex gap-4 flex-wrap">
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Source Type</label>
-              <select
-                value={sourceType}
-                onChange={(e) => setSourceType(e.target.value)}
-                className="border rounded px-3 py-2 text-sm"
-              >
-                <option value="doi">DOI</option>
-                <option value="arxiv_id">arXiv ID</option>
-                <option value="pdf_url">PDF URL</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1 flex-1 min-w-48">
-              <label className="text-sm font-medium">Source Value</label>
-              <input
-                type="text"
-                value={sourceValue}
-                onChange={(e) => {
-                  setSourceValue(e.target.value);
-                  setVariance(null);
-                }}
-                placeholder={sourceType === "doi" ? "10.1145/3442188.3445922" : sourceType === "arxiv_id" ? "2306.13213" : "https://..."}
-                required
-                className="border rounded px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Model</label>
-              <select
-                value={modelUsed}
-                onChange={(e) => setModelUsed(e.target.value)}
-                disabled={modelsLoading || models.length === 0}
-                className="border rounded px-3 py-2 text-sm"
-              >
-                {models.length === 0 && <option value="">No active models</option>}
-                {models.map((m) => (
-                  <option key={m.id} value={m.identifier}>
-                    {m.display_name ? `${m.display_name} (${m.identifier})` : m.identifier}
-                  </option>
-                ))}
-              </select>
-              {modelsError && <span className="text-xs text-red-600">{modelsError}</span>}
-            </div>
+        <div className="extraction-section-header">
+          <div>
+            <h2>Submit New Extraction Job</h2>
+            <p>Create a DOI, arXiv ID, or PDF URL extraction request.</p>
           </div>
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <button
-              type="button"
-              onClick={handleCheckVariance}
-              disabled={!sourceValue || varianceLoading}
-              className="bg-gray-100 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 disabled:opacity-50"
-            >
-              {varianceLoading ? "Checking..." : "Check Prior Runs & Cost"}
-            </button>
-            {varianceError && <span className="text-xs text-red-600">{varianceError}</span>}
-            {variance && (
-              <span className="text-xs text-gray-700 bg-gray-50 border rounded px-3 py-1.5">
-                {variance.run_count === 0 ? (
-                  "No prior runs for this source value -- this will be run #1."
-                ) : (
-                  <>
-                    {variance.run_count} prior run{variance.run_count === 1 ? "" : "s"} | mean quality{" "}
-                    {variance.mean_quality_score !== null ? (Number(variance.mean_quality_score) * 100).toFixed(0) + "%" : "N/A"}
-                    {" "}(&plusmn;{variance.stddev_quality_score !== null ? (Number(variance.stddev_quality_score) * 100).toFixed(1) + "%" : "N/A"})
-                    {" "}| total spent so far {formatCost(variance.total_estimated_cost_usd)}
-                  </>
-                )}
-              </span>
-            )}
-          </div>
-
-          {submitError && (
-            <p className="text-red-600 text-sm">{submitError}</p>
-          )}
-
           <button
-            type="submit"
-            disabled={submitting || !modelUsed}
-            className="bg-indigo-600 text-white px-5 py-2 rounded text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+            className="secondary"
+            onClick={() => setShowSubmissionForm((value) => !value)}
+            type="button"
+            aria-expanded={showSubmissionForm}
           >
-            {submitting ? "Submitting..." : "Submit Job"}
+            {showSubmissionForm ? "Collapse" : "New Extraction"}
           </button>
-        </form>
+        </div>
+
+        {showSubmissionForm && (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="model-create-row extraction-create-row">
+              <div className="model-create-field extraction-field--type">
+                <label htmlFor="source-type">Source Type</label>
+                <select
+                  id="source-type"
+                  value={sourceType}
+                  onChange={(e) => setSourceType(e.target.value)}
+                >
+                  <option value="doi">DOI</option>
+                  <option value="arxiv_id">arXiv ID</option>
+                  <option value="pdf_url">PDF URL</option>
+                </select>
+              </div>
+
+              <div className="model-create-field extraction-field--source">
+                <label htmlFor="source-value">Source Value</label>
+                <input
+                  id="source-value"
+                  type="text"
+                  value={sourceValue}
+                  onChange={(e) => {
+                    setSourceValue(e.target.value);
+                    setVariance(null);
+                  }}
+                  placeholder={
+                    sourceType === "doi"
+                      ? "10.1145/3442188.3445922"
+                      : sourceType === "arxiv_id"
+                        ? "2306.13213"
+                        : "https://..."
+                  }
+                  required
+                />
+              </div>
+
+              <div className="model-create-field extraction-field--model">
+                <label htmlFor="extraction-model">Model</label>
+                <select
+                  id="extraction-model"
+                  value={modelUsed}
+                  onChange={(e) => setModelUsed(e.target.value)}
+                  disabled={modelsLoading || models.length === 0}
+                >
+                  {models.length === 0 && <option value="">No active models</option>}
+                  {models.map((model) => (
+                    <option key={model.id} value={model.identifier}>
+                      {model.display_name
+                        ? `${model.display_name} (${model.identifier})`
+                        : model.identifier}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="model-create-field extraction-field--action">
+                <span className="model-create-action-label">Action</span>
+                <div className="extraction-submit-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={handleCheckVariance}
+                    disabled={!sourceValue || varianceLoading}
+                  >
+                    {varianceLoading ? "Checking..." : "Check Cost"}
+                  </button>
+
+                  <button type="submit" disabled={submitting || !modelUsed}>
+                    {submitting ? "Submitting..." : "Submit"}
+                  </button>
+                </div>
+              </div>
+            </div>
+            {submitError && (
+              <p className="text-red-600 text-sm">{submitError}</p>
+            )}
+          </form>
+        )}
       </section>
 
       {pendingJobs.length > 0 && (
@@ -328,71 +348,184 @@ export default function ExtractionPage() {
         </section>
       )}
 
-      <section className="bg-white rounded-lg border p-5 shadow-sm">
-        <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-          <h2 className="text-lg font-semibold">All Jobs</h2>
-          <div className="flex gap-2 items-center">
+      <section className="card extraction-history-card">
+        <div className="extraction-section-header">
+          <div>
+            <h2>Extraction History</h2>
+            <p>
+              {otherJobs.length} job{otherJobs.length === 1 ? "" : "s"} shown.
+              {" "}Estimated listed spend: {formatCost(sumCosts(otherJobs))}
+            </p>
+          </div>
+
+          <div className="extraction-history-controls">
             <select
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="border rounded px-3 py-1.5 text-sm"
+              onChange={(event) => setFilterStatus(event.target.value)}
+              aria-label="Filter extraction jobs by status"
             >
               <option value="">All statuses</option>
-              <option value="queued">queued</option>
-              <option value="running">running</option>
-              <option value="done">done</option>
-              <option value="needs_review">needs_review</option>
-              <option value="failed">failed</option>
+              <option value="queued">Queued</option>
+              <option value="running">Running</option>
+              <option value="done">Done</option>
+              <option value="needs_review">Needs review</option>
+              <option value="failed">Failed</option>
             </select>
-            <button
-              onClick={load}
-              className="bg-gray-100 px-3 py-1.5 rounded text-sm hover:bg-gray-200"
-            >
+
+            <button className="secondary" onClick={load} type="button">
               Refresh
             </button>
           </div>
         </div>
 
-        {loading && <p className="text-sm text-gray-500">Loading...</p>}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {loading && <p>Loading...</p>}
+        {error && <p className="error">{error}</p>}
 
-        {!loading && jobs.length === 0 && (
-          <p className="text-sm text-gray-500">No jobs found.</p>
+        {!loading && otherJobs.length === 0 && (
+          <p className="empty-state">No extraction jobs match this filter.</p>
         )}
 
-        {!loading && jobs.length > 0 && (
-          <p className="text-xs text-gray-500 mb-2">
-            Total estimated spend across listed jobs: {formatCost(sumCosts(jobs))}
-          </p>
-        )}
+        {!loading && otherJobs.length > 0 && (
+          <>
+            <div className="extraction-table-scroll">
+              <table className="extraction-history-table">
+                <thead>
+                  <tr>
+                    <th>Source</th>
+                    <th>Model</th>
+                    <th>Status</th>
+                    <th>Quality</th>
+                    <th>Cost</th>
+                    <th>Submitted</th>
+                    <th aria-label="Details" />
+                  </tr>
+                </thead>
 
-        <div className="divide-y">
-          {otherJobs.map((job) => (
-            <div key={job.id} className="py-3 flex justify-between items-start flex-wrap gap-2">
-              <div>
-                <p className="text-sm font-medium">{job.source_type}: {job.source_value}</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Model: {job.model_used ?? "N/A"} | Quality: {job.quality_score !== null ? (Number(job.quality_score) * 100).toFixed(0) + "%" : "N/A"} | Submitted: {new Date(job.created_at).toLocaleString()}
-                </p>
-                <p className="text-xs text-gray-400">
-                  Tokens: {formatTokens(job.input_tokens, job.output_tokens)} | Est. cost: {formatCost(job.estimated_cost_usd)}
-                </p>
-                {job.result_benchmark_id && (
-                  <p className="text-xs text-gray-400">
-                    Benchmark:{" "}
-                    <Link href={`/admin/benchmarks/${job.result_benchmark_id}`} className="text-indigo-600 hover:underline">
-                      {job.result_benchmark_id}
-                    </Link>
-                    {job.result_benchmark_status ? ` (${job.result_benchmark_status})` : ""}
-                  </p>
-                )}
-              </div>
-              <span className={`text-xs px-2 py-1 rounded font-medium ${STATUS_COLORS[job.status] ?? "bg-gray-100"}`}>
-                {job.status}
-              </span>
+                <tbody>
+                  {paginatedJobs.map((job) => {
+                    const isExpanded = expandedJobId === job.id;
+
+                    return (
+                      <Fragment key={job.id}>
+                        <tr>
+                          <td>
+                            <strong>{job.source_type}</strong>
+                            <span className="extraction-source-value">
+                              {job.source_value}
+                            </span>
+                          </td>
+
+                          <td>{job.model_used ?? "N/A"}</td>
+
+                          <td>
+                            <span className={`extraction-status extraction-status--${job.status}`}>
+                              {job.status.replaceAll("_", " ")}
+                            </span>
+                          </td>
+
+                          <td>
+                            {job.quality_score !== null
+                              ? `${(Number(job.quality_score) * 100).toFixed(0)}%`
+                              : "N/A"}
+                          </td>
+
+                          <td>{formatCost(job.estimated_cost_usd)}</td>
+
+                          <td>{new Date(job.created_at).toLocaleString()}</td>
+
+                          <td>
+                            <button
+                              className="secondary extraction-details-button"
+                              onClick={() =>
+                                setExpandedJobId(isExpanded ? null : job.id)
+                              }
+                              type="button"
+                              aria-expanded={isExpanded}
+                            >
+                              {isExpanded ? "Hide" : "Details"}
+                            </button>
+                          </td>
+                        </tr>
+                      
+                        {isExpanded && (
+                          <tr className="extraction-details-row">
+                            <td colSpan={7}>
+                              <div className="extraction-details-grid">
+                                <div>
+                                  <span>Input tokens</span>
+                                  <strong>{job.input_tokens ?? "N/A"}</strong>
+                                </div>
+
+                                <div>
+                                  <span>Output tokens</span>
+                                  <strong>{job.output_tokens ?? "N/A"}</strong>
+                                </div>
+
+                                <div>
+                                  <span>Token summary</span>
+                                  <strong>
+                                    {formatTokens(job.input_tokens, job.output_tokens)}
+                                  </strong>
+                                </div>
+
+                                <div>
+                                  <span>Benchmark result</span>
+                                  {job.result_benchmark_id ? (
+                                    <Link href={`/admin/benchmarks/${job.result_benchmark_id}`}>
+                                      View benchmark
+                                    </Link>
+                                  ) : (
+                                    <strong>Not created</strong>
+                                  )}
+                                </div>
+
+                                <div>
+                                  <span>Benchmark status</span>
+                                  <strong>{job.result_benchmark_status ?? "N/A"}</strong>
+                                </div>
+
+                                <div>
+                                  <span>Review required</span>
+                                  <strong>{job.requires_review ? "Yes" : "No"}</strong>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          ))}
-        </div>
+
+            <div className="extraction-pagination">
+              <span>
+                Page {safeHistoryPage} of {historyPageCount}
+              </span>
+
+              <div>
+                <button
+                  className="secondary"
+                  disabled={safeHistoryPage === 1}
+                  onClick={() => setHistoryPage((page) => page - 1)}
+                  type="button"
+                >
+                  Previous
+                </button>
+
+                <button
+                  className="secondary"
+                  disabled={safeHistoryPage === historyPageCount}
+                  onClick={() => setHistoryPage((page) => page + 1)}
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </section>
     </div>
   );
