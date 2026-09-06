@@ -1,25 +1,3 @@
-// Destination path: frontend/components/BenchmarkForm.tsx
-// Replaces the existing file in full.
-//
-// CHANGE (2026-09-02):
-// 1. Task Type now fetches from GET /vocab-terms?category=task_type
-//    (the agent-grown VocabTerm catalogue, listVocabTerms() in
-//    lib/api.ts) instead of vocab.task_type from GET /vocab, which
-//    served controlled_vocab.py's small, already-known-stale static
-//    list. Rendered with the new TagMultiSelect component (searchable,
-//    chip-based) instead of a checkbox-per-option grid, so the panel
-//    no longer grows physically larger as the catalogue's task type
-//    list grows over time.
-// 2. Removed "Phase 5" from the auto-classified panel's label text.
-// 3. Citation Range is now a disabled, computed-only display (backend
-//    always overwrites it from Cited By via
-//    app/core/citation_range.py's compute_citation_range() -- see the
-//    paired backend/app/routers/benchmarks.py change) instead of a
-//    free-text input nobody was ever populating correctly.
-// 4. Complexity Justification is now a textarea with a clearer label
-//    ("Complexity Reason") instead of a single-line input, so the full
-//    reason is readable rather than truncated/scrolled.
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -264,7 +242,7 @@ export default function BenchmarkForm({ initial, benchmarkId }: Props) {
           ))}
         </div>
 
-        <label>Language Support (ISO 639-1, or Multilingual if 5+ languages)</label>
+        <label>Language Support (full language names, or Multilingual if 5+ languages)</label>
         <div>
           {vocab.language_support.map((l) => (
             <label key={l}>

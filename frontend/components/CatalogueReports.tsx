@@ -88,7 +88,9 @@ function shortLabel(label: string, limit = 25) {
 
 function tickValues(maximum: number) {
   const max = Math.max(maximum, 1);
-  return [0, 0.25, 0.5, 0.75, 1].map((step) => Math.round(max * step));
+  return Array.from(
+    new Set([0, 0.25, 0.5, 0.75, 1].map((step) => Math.round(max * step))),
+  );
 }
 
 function HorizontalChart({
@@ -101,8 +103,8 @@ function HorizontalChart({
   const { ref, width } = useContainerWidth();
   const labelWidth = Math.min(190, Math.max(112, width * 0.26));
   const right = 42;
-  const top = 28;
-  const bottom = 28;
+  const top = 34;
+  const bottom = 34;
   const rowHeight = report.chartKind === "grouped" ? 43 : 34;
   const height = Math.max(230, top + bottom + report.rows.length * rowHeight);
   const plotWidth = Math.max(width - labelWidth - right, 100);
@@ -128,6 +130,14 @@ function HorizontalChart({
         <desc id={`chart-${report.id}-description`}>
           {report.description} Exact values are also available in the adjacent data table.
         </desc>
+        <text
+          className="catalogue-chart-axis-title"
+          x={labelWidth + plotWidth}
+          y="15"
+          textAnchor="end"
+        >
+          Benchmarks
+        </text>
 
         {ticks.map((tick, index) => {
           const x = labelWidth + (tick / maximum) * plotWidth;
@@ -187,7 +197,7 @@ function HorizontalChart({
 function LineChart({ report }: { report: ReportDefinition }) {
   const { ref, width } = useContainerWidth();
   const height = 320;
-  const margin = { top: 24, right: 24, bottom: 44, left: 48 };
+  const margin = { top: 24, right: 24, bottom: 58, left: 58 };
   const plotWidth = Math.max(width - margin.left - margin.right, 100);
   const plotHeight = height - margin.top - margin.bottom;
   const maximum = Math.max(1, ...report.rows.map((row) => row.chartValues.count || 0));
@@ -207,6 +217,23 @@ function LineChart({ report }: { report: ReportDefinition }) {
         <desc id={`chart-${report.id}-description`}>
           {report.description} Exact values are also available in the adjacent data table.
         </desc>
+        <text
+          className="catalogue-chart-axis-title"
+          x="16"
+          y={margin.top + plotHeight / 2}
+          textAnchor="middle"
+          transform={`rotate(-90 16 ${margin.top + plotHeight / 2})`}
+        >
+          Benchmarks
+        </text>
+        <text
+          className="catalogue-chart-axis-title"
+          x={margin.left + plotWidth / 2}
+          y={height - 7}
+          textAnchor="middle"
+        >
+          Release year
+        </text>
         {tickValues(maximum).map((tick, index) => (
           <g key={`${tick}-${index}`}>
             <line className="catalogue-chart-grid" x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} />
@@ -231,7 +258,7 @@ function LineChart({ report }: { report: ReportDefinition }) {
             >
               <title>{`${row.label}: ${(row.chartValues.count || 0).toLocaleString()} benchmarks`}</title>
             </circle>
-            <text className="catalogue-chart-axis-label" x={x(index)} y={height - 16} textAnchor="middle">
+            <text className="catalogue-chart-axis-label" x={x(index)} y={height - 28} textAnchor="middle">
               {row.label}
             </text>
           </g>
@@ -250,6 +277,13 @@ function formatCell(value: CellValue, format?: ReportColumn["format"]) {
 }
 
 function buildReports(data: CatalogueReportsData): ReportDefinition[] {
+  const currentYear = new Date().getFullYear();
+  const includesCurrentYear = data.publication_trend.some((row) => row.year === currentYear);
+  const publicationNote = [
+    `${data.undated_benchmarks.toLocaleString()} benchmark${data.undated_benchmarks === 1 ? "" : "s"} excluded because no release date is recorded.`,
+    includesCurrentYear ? `${currentYear} is a partial year.` : "",
+  ].filter(Boolean).join(" ");
+
   const categoryReport = (
     id: string,
     title: string,
@@ -289,7 +323,7 @@ function buildReports(data: CatalogueReportsData): ReportDefinition[] {
       id: "publication",
       title: "Publication trend",
       description: "Published benchmarks by release year.",
-      note: `${data.undated_benchmarks.toLocaleString()} benchmark${data.undated_benchmarks === 1 ? "" : "s"} excluded because no release date is recorded.`,
+      note: publicationNote,
       firstColumnLabel: "Release year",
       columns: [
         { key: "count", label: "Benchmarks", format: "number" },
@@ -461,6 +495,7 @@ export default function CatalogueReports() {
   const [error, setError] = useState(false);
   const [selectedId, setSelectedId] = useState("publication");
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+  const [mobileView, setMobileView] = useState<"chart" | "table">("chart");
 
   async function load() {
     setLoading(true);
@@ -484,6 +519,7 @@ export default function CatalogueReports() {
 
   useEffect(() => {
     setHiddenSeries(new Set());
+    setMobileView("chart");
   }, [selectedId]);
 
   function toggleSeries(key: string) {
@@ -533,7 +569,7 @@ export default function CatalogueReports() {
         <div className="catalogue-report-body">
           <div className="catalogue-report-intro">
             <div>
-              <h3>{selected.title}</h3>
+              <h3 className="sr-only">{selected.title}</h3>
               <p>{selected.description}</p>
             </div>
             <span>{data?.total_benchmarks.toLocaleString()} published records</span>
@@ -567,7 +603,26 @@ export default function CatalogueReports() {
                 </div>
               )}
 
-              <div className="catalogue-report-grid">
+              <div className="catalogue-report-mobile-switch" aria-label="Report display">
+                <button
+                  type="button"
+                  className="catalogue-report-view-button"
+                  aria-pressed={mobileView === "chart"}
+                  onClick={() => setMobileView("chart")}
+                >
+                  Chart
+                </button>
+                <button
+                  type="button"
+                  className="catalogue-report-view-button"
+                  aria-pressed={mobileView === "table"}
+                  onClick={() => setMobileView("table")}
+                >
+                  Data table
+                </button>
+              </div>
+
+              <div className={`catalogue-report-grid catalogue-report-grid--${mobileView}`}>
                 <div className="catalogue-report-table-scroll" tabIndex={0} aria-label={`${selected.title} data table`}>
                   <table className="catalogue-report-table">
                     <caption className="sr-only">{selected.title}: {selected.description}</caption>

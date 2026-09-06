@@ -69,6 +69,8 @@ class Benchmark(Base):
 
     metrics = relationship("EvalMetric", back_populates="benchmark", cascade="all, delete-orphan")
     repo_stats = relationship("RepoStat", back_populates="benchmark", cascade="all, delete-orphan")
+    paper_metadata = relationship("PaperMetadata", back_populates="benchmark", uselist=False, cascade="all, delete-orphan")
+    citation_snapshots = relationship("CitationSnapshot", back_populates="benchmark", cascade="all, delete-orphan")
 
 class EvalMetric(Base):
     __tablename__ = "eval_metrics"
@@ -115,6 +117,46 @@ class RepoStat(Base):
     fetched_at = Column(DateTime(timezone=True), server_default=func.now())
 
     benchmark = relationship("Benchmark", back_populates="repo_stats")
+
+
+class PaperMetadata(Base):
+    """Latest source-backed bibliographic metadata for one benchmark paper."""
+
+    __tablename__ = "paper_metadata"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id", ondelete="CASCADE"), nullable=False, unique=True)
+    doi = Column(String(255), nullable=True)
+    arxiv_id = Column(String(100), nullable=True)
+    semantic_scholar_paper_id = Column(String(100), nullable=True)
+    canonical_title = Column(Text, nullable=True)
+    authors = Column(Text, nullable=True)
+    venue = Column(String(255), nullable=True)
+    publication_date = Column(Date, nullable=True)
+    is_open_access = Column(Boolean, nullable=True)
+    open_access_url = Column(Text, nullable=True)
+    metadata_source = Column(String(100), nullable=True)
+    citation_count = Column(Integer, nullable=True)
+    citation_source = Column(String(100), nullable=True)
+    citation_checked_at = Column(DateTime(timezone=True), nullable=True)
+    last_refreshed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    last_error = Column(Text, nullable=True)
+
+    benchmark = relationship("Benchmark", back_populates="paper_metadata")
+
+
+class CitationSnapshot(Base):
+    """Append-only citation-count history, intentionally separate from repo stats."""
+
+    __tablename__ = "citation_snapshots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    benchmark_id = Column(UUID(as_uuid=True), ForeignKey("benchmarks.id", ondelete="CASCADE"), nullable=False)
+    citation_count = Column(Integer, nullable=False)
+    source = Column(String(100), nullable=False)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    benchmark = relationship("Benchmark", back_populates="citation_snapshots")
 
 
 class ExtractionJob(Base):

@@ -11,7 +11,8 @@ from app.core.config import settings
 from app.core.github_rate_limit import has_sufficient_quota
 from app.core.github_scrapper import fetch_github_stats
 from app.core.hf_scrapper import fetch_hf_dataset_stats, fetch_hf_model_stats
-from app.core.paper_fetcher import fetch_semantic_scholar_citation_count
+from app.core.citation_range import compute_citation_range
+from app.core.paper_metadata import refresh_paper_metadata_for_benchmark
 from app.db.session import SessionLocal
 from app.models.orm import Benchmark, RepoStat
 
@@ -181,6 +182,7 @@ def _apply_citation_refresh(db, benchmark: Benchmark, new_count: int) -> bool:
     threshold = settings.POPULAR_CITATION_THRESHOLD
 
     benchmark.cited_by = new_count
+    benchmark.citation_range = compute_citation_range(new_count)
 
     promoted = False
     if new_count > threshold and benchmark.complexity_level != "Popular":
@@ -220,16 +222,15 @@ def refresh_citation_count_for_benchmark(self, benchmark_id: str) -> dict:
             logger.warning("refresh_citation_count_for_benchmark: benchmark %s not found", benchmark_id)
             return {"benchmark_id": benchmark_id, "error": "benchmark_not_found"}
 
-        search_term = _citation_search_term(benchmark)
-        if not search_term:
+        if not _citation_search_term(benchmark):
             logger.info(
                 "refresh_citation_count_for_benchmark: skipping %s -- no paper_link or paper title.",
                 benchmark_id,
             )
             return {"benchmark_id": benchmark_id, "skipped": "no_search_term"}
 
-        new_count = fetch_semantic_scholar_citation_count(
-            search_term, api_key=settings.SEMANTIC_SCHOLAR_API_KEY
+        _, new_count = refresh_paper_metadata_for_benchmark(
+            db, benchmark, semantic_scholar_api_key=settings.SEMANTIC_SCHOLAR_API_KEY,
         )
         if new_count is None:
             logger.warning(
@@ -260,11 +261,11 @@ def refresh_all_citation_counts() -> dict:
     """
     db = SessionLocal()
     try:
-        benchmarks = (
-            db.query(Benchmark)
+        benchmark_ids = [
+            row.id for row in db.query(Benchmark.id)
             .filter(Benchmark.status != "rejected")
             .all()
-        )
+        ]
     finally:
         db.close()
 
@@ -274,14 +275,14 @@ def refresh_all_citation_counts() -> dict:
 
     db = SessionLocal()
     try:
-        for benchmark in benchmarks:
-            search_term = _citation_search_term(benchmark)
-            if not search_term:
+        for benchmark_id in benchmark_ids:
+            benchmark = db.query(Benchmark).filter(Benchmark.id == benchmark_id).first()
+            if benchmark is None or not _citation_search_term(benchmark):
                 skipped += 1
                 continue
 
-            new_count = fetch_semantic_scholar_citation_count(
-                search_term, api_key=settings.SEMANTIC_SCHOLAR_API_KEY
+            _, new_count = refresh_paper_metadata_for_benchmark(
+                db, benchmark, semantic_scholar_api_key=settings.SEMANTIC_SCHOLAR_API_KEY,
             )
             if new_count is None:
                 failed += 1
@@ -302,6 +303,6 @@ def refresh_all_citation_counts() -> dict:
 
     logger.info(
         "refresh_all_citation_counts: processed %d benchmarks (updated=%d, skipped=%d, failed=%d).",
-        len(benchmarks), updated, skipped, failed,
+        len(benchmark_ids), updated, skipped, failed,
     )
-    return {"processed": len(benchmarks), "updated": updated, "skipped": skipped, "failed": failed}
+    return {"processed": len(benchmark_ids), "updated": updated, "skipped": skipped, "failed": failed}

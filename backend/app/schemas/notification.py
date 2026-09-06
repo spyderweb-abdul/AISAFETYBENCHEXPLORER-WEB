@@ -20,3 +20,13 @@ class NotificationOut(BaseModel):
     link_path: Optional[str] = None
     is_read: bool
     created_at: datetime
+
+
+class NotificationPage(BaseModel):
+    """A single page of a user's personal notification history."""
+
+    items: list[NotificationOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

@@ -1,20 +1,3 @@
-# Destination path: backend/app/main.py
-# Replaces the existing file in full.
-#
-# CHANGE (2026-09-01): registers the new vocab_terms router (admin CRUD
-# for the VocabTerm task_type/evaluation_metric catalogue,
-# backend/app/routers/vocab_terms.py). Kept as a separate router import
-# name from the existing vocab.py (already registered below) to avoid
-# a naming collision -- vocab.py serves the static controlled-vocabulary
-# lists for BenchmarkForm.tsx dropdowns; vocab_terms.py serves the new,
-# agent-grown, DB-backed catalogue.
-#
-# CHANGE (2026-08-28): registers the models router (admin CRUD for the
-# ModelOption catalogue, backend/app/routers/models.py).
-#
-# CHANGE (Phase 6 items 3/4, prior session): registers submissions,
-# notifications, and users routers.
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -33,6 +16,7 @@ from app.routers import (
     metrics,
     models,
     notifications,
+    paper_metadata,
     repo_stats,
     stats,
     submissions,
@@ -68,6 +52,7 @@ app.include_router(export.router)
 app.include_router(vocab.router)
 app.include_router(extraction.router)
 app.include_router(repo_stats.router)
+app.include_router(paper_metadata.router)
 app.include_router(stats.router)
 app.include_router(submissions.router)
 app.include_router(notifications.router)

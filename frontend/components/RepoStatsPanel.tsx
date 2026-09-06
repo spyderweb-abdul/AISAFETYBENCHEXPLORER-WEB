@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import {
   GithubRateLimit,
+  PaperMetadata,
   RepoStat,
+  getPaperMetadata,
   getGithubRateLimit,
   listRepoStatsForBenchmark,
   triggerRepoStatsRefresh,
@@ -33,6 +35,7 @@ export default function RepoStatsPanel({
   datasetRepository,
 }: Props) {
   const [stats, setStats] = useState<RepoStat[]>([]);
+  const [paperMetadata, setPaperMetadata] = useState<PaperMetadata | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +51,12 @@ export default function RepoStatsPanel({
     setLoading(true);
     setError(null);
     try {
-      const data = await listRepoStatsForBenchmark(benchmarkId, showHistory);
-      setStats(data);
+      const [repoData, metadata] = await Promise.all([
+        listRepoStatsForBenchmark(benchmarkId, showHistory),
+        getPaperMetadata(benchmarkId).catch(() => null),
+      ]);
+      setStats(repoData);
+      setPaperMetadata(metadata);
     } catch (err: any) {
       setError("Failed to load repository activity statistics.");
     } finally {
@@ -90,7 +97,7 @@ export default function RepoStatsPanel({
     setError(null);
     try {
       const result = await triggerRepoStatsRefresh(benchmarkId);
-      setNotice(`Refresh queued (task ${result.task_id}). Click Reload in a few seconds to see updated values.`);
+      setNotice(`Repository and citation refresh queued (tasks ${result.task_id} and ${result.citation_task_id}). Click Reload in a few seconds to see updated values.`);
     } catch (err: any) {
       setError(err?.response?.data?.detail ? JSON.stringify(err.response.data.detail) : "Failed to queue refresh.");
     } finally {
@@ -113,7 +120,7 @@ export default function RepoStatsPanel({
           `Check the quota panel below or wait for it to reset.`
         );
       } else {
-        setNotice(`Bulk refresh queued for all benchmarks (task ${result.task_id}).`);
+        setNotice(`Repository and citation refresh queued for all benchmarks (tasks ${result.task_id} and ${result.citation_task_id}).`);
       }
       loadQuota();
     } catch (err: any) {
@@ -129,7 +136,7 @@ export default function RepoStatsPanel({
   return (
     <div className="card">
       <div className="topbar">
-        <h2>Repository activity statistics</h2>
+        <h2>Repository and paper activity</h2>
         <div className="admin-toolbar">
           <label className="vocab-review-filter">
             <input
@@ -142,13 +149,23 @@ export default function RepoStatsPanel({
           <button type="button" className="secondary" onClick={refresh} disabled={loading}>
             Reload
           </button>
-          <button type="button" onClick={handleRefreshNow} disabled={refreshing || !hasAnyRepo}>
+          <button type="button" onClick={handleRefreshNow} disabled={refreshing}>
             {refreshing ? "Queuing..." : "Refresh Now"}
           </button>
           <button type="button" className="secondary" onClick={handleRefreshAll} disabled={refreshingAll}>
             {refreshingAll ? "Queuing..." : "Refresh All Benchmarks"}
           </button>
         </div>
+      </div>
+
+      <div className="paper-activity-summary">
+        <span>Paper citations</span>
+        {paperMetadata?.citation_count != null ? (
+          <strong>{paperMetadata.citation_count} · {paperMetadata.citation_source ?? "source not labelled"}</strong>
+        ) : (
+          <strong>Not yet source-verified</strong>
+        )}
+        <small>{paperMetadata?.citation_checked_at ? `Checked ${new Date(paperMetadata.citation_checked_at).toLocaleString()}` : "Refresh to resolve the paper record."}</small>
       </div>
 
       {/* Roadmap item 14: GitHub API quota readout */}
@@ -174,7 +191,7 @@ export default function RepoStatsPanel({
 
       {!hasAnyRepo && (
         <p className="muted-copy">
-          This benchmark has no code_repository or dataset_repository set, so there is nothing to refresh.
+          This benchmark has no code_repository or dataset_repository set. Refreshing still updates its paper metadata and citations.
         </p>
       )}
 

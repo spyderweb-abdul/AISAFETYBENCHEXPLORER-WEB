@@ -13,6 +13,7 @@ from app.models.orm import Benchmark, EvalMetric, ExtractionJob, RepoStat, Vocab
 
 from app.core.complexity_classifier import ComplexitySignals, classify
 from app.core.paper_fetcher import fetch_source
+from app.core.paper_metadata import refresh_paper_metadata_for_benchmark
 from app.core.config import settings
 from app.core.cost_tracking import estimate_cost_usd
 from app.core.safety_dimension_classifier import classify_safety_dimensions
@@ -21,6 +22,7 @@ from app.core.github_scrapper import fetch_github_stats
 from app.core.hf_scrapper import fetch_hf_dataset_stats
 from app.core.vocab_normalize import normalize_term, term_variants
 from app.core.citation_range import compute_citation_range
+from app.core.languages import LANGUAGE_SUPPORT
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,6 @@ ENTRY_MODALITIES = [
     "Transcripts", "Sentence Pairs", "Entry Tuples",
 ]
 
-LANGUAGE_SUPPORT = ["en", "zh", "ar", "fr", "hi", "ko", "Multilingual"]
 
 # DEMOTED (2026-09-01): this used to be the live prompt vocabulary, and had
 # already silently drifted from controlled_vocab.py's independent copy (the
@@ -354,13 +355,19 @@ _ENTRY_MODALITY_ALIASES = {
 }
 
 _LANGUAGE_ALIASES = {
-    "english": "en",
-    "chinese": "zh",
-    "mandarin": "zh",
-    "arabic": "ar",
-    "french": "fr",
-    "hindi": "hi",
-    "korean": "ko",
+    "en": "English",
+    "english": "English",
+    "zh": "Chinese",
+    "chinese": "Chinese",
+    "mandarin": "Chinese",
+    "ar": "Arabic",
+    "arabic": "Arabic",
+    "fr": "French",
+    "french": "French",
+    "hi": "Hindi",
+    "hindi": "Hindi",
+    "ko": "Korean",
+    "korean": "Korean",
     "multi": "Multilingual",
     "multiple": "Multilingual",
 }
@@ -1199,6 +1206,26 @@ def run_extraction(
             benchmark.safety_dimensions = classify_safety_dimensions(benchmark.task_type)
             db.add(benchmark)
             db.flush()
+
+        # Bibliographic facts are source-backed rather than model-generated.
+        # A resolver failure is recorded for later refresh but must not discard
+        # an otherwise useful extraction result.
+        try:
+            _, verified_citation_count = refresh_paper_metadata_for_benchmark(
+                db,
+                benchmark,
+                source_type=source_type,
+                source_value=source_value,
+                fetched=fetched,
+                semantic_scholar_api_key=semantic_scholar_api_key,
+            )
+            if verified_citation_count is not None:
+                benchmark.cited_by = verified_citation_count
+                benchmark.citation_range = compute_citation_range(verified_citation_count)
+        except Exception as exc:
+            logger.warning(
+                "Job %s: could not persist source-backed paper metadata: %s", job_id, exc,
+            )
 
         metrics_persisted = _persist_eval_metrics(
             db, benchmark.id, raw.get("evaluation_metrics_catalogue", [])

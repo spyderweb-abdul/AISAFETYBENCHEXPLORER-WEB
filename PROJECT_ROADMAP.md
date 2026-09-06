@@ -166,6 +166,12 @@ sessions know what NOT to re-investigate from scratch:
   language and modality coverage, licenses, creation method, development
   purpose, and use cases. Reports aggregate every published record and use
   only the latest repository snapshot per source.
+- The /browse layout was tightened after visual review: the catalogue now
+  shrinks for short result sets while retaining an internal maximum-height
+  scroll for long sets, filters use a balanced responsive grid, exports and
+  result counts share the records header, final-row borders are explicit,
+  mobile reports offer chart/table views, and publication charts include
+  zero-count years, axis labels, and a partial-current-year note.
 - A pre-existing Alembic branch (two unmerged heads,
   0006_add_community_submissions and 0007_use_case_safety_dim_cols)
   was merged via 0008_add_model_options's tuple down_revision.
