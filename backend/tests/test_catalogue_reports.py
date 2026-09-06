@@ -117,3 +117,33 @@ def test_catalogue_reports_handle_an_empty_catalogue():
     assert report["publication_trend"] == []
     assert report["task_types"] == []
     assert all(row["count"] == 0 for row in report["complexity_distribution"])
+
+
+def test_language_report_uses_full_names_for_legacy_codes():
+    report = build_catalogue_reports(
+        [
+            benchmark("a", language_support=["en"]),
+            benchmark("b", language_support=["English"]),
+        ],
+        [],
+    )
+
+    assert report["language_coverage"] == [
+        {"label": "English", "count": 2, "share_percent": 100.0},
+    ]
+
+
+def test_publication_trend_includes_zero_count_years():
+    report = build_catalogue_reports(
+        [
+            benchmark("a", release_date=date(2021, 1, 1)),
+            benchmark("b", release_date=date(2023, 1, 1)),
+        ],
+        [],
+    )
+
+    assert report["publication_trend"] == [
+        {"year": 2021, "count": 1, "year_over_year_percent": None},
+        {"year": 2022, "count": 0, "year_over_year_percent": -100.0},
+        {"year": 2023, "count": 1, "year_over_year_percent": None},
+    ]

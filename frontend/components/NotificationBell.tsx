@@ -29,6 +29,7 @@ const NOTIFICATION_AUDIENCE_LABEL: Record<string, { label: string; color: string
   submission_needs_reextraction: { label: "For you (submitter)", color: "#78350f" },
   submission_failed_extraction: { label: "For you (submitter)", color: "#991b1b" },
 };
+const BELL_NOTIFICATION_LIMIT = 10;
 
 export default function NotificationBell() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -81,7 +82,7 @@ export default function NotificationBell() {
     if (next) {
       setLoading(true);
       try {
-        const data = await listNotifications();
+        const data = await listNotifications(false, BELL_NOTIFICATION_LIMIT + 1);
         setNotifications(data);
       } finally {
         setLoading(false);
@@ -138,7 +139,7 @@ export default function NotificationBell() {
           ) : notifications.length === 0 ? (
             <p className="notification-empty">No notifications yet.</p>
           ) : (
-            notifications.map((n) => {
+            notifications.slice(0, BELL_NOTIFICATION_LIMIT).map((n) => {
               const audience = NOTIFICATION_AUDIENCE_LABEL[n.notification_type];
               return (
                 <div
@@ -174,6 +175,13 @@ export default function NotificationBell() {
                 </div>
               );
             })
+          )}
+          {!loading && notifications.length > BELL_NOTIFICATION_LIMIT && (
+            <div className="notification-panel-footer">
+              <Link href="/notifications" className="notification-view-all-link" onClick={() => setOpen(false)}>
+                View all notifications →
+              </Link>
+            </div>
           )}
         </div>
       )}

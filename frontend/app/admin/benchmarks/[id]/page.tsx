@@ -17,6 +17,7 @@ import EvalMetricsPanel from "../../../../components/EvalMetricsPanel";
 import RepoStatsPanel from "../../../../components/RepoStatsPanel";
 import ReviewPanel from "../../../../components/ReviewPanel";
 import VersionHistoryPanel from "../../../../components/VersionHistoryPanel";
+import PaperMetadataPanel from "../../../../components/PaperMetadataPanel";
 
 export default function EditBenchmarkPage() {
   const params = useParams();
@@ -46,6 +47,7 @@ export default function EditBenchmarkPage() {
       <ReviewPanel benchmark={benchmark} onReviewed={setBenchmark} />
 
       <BenchmarkForm initial={benchmark} benchmarkId={id} />
+      <PaperMetadataPanel benchmarkId={id} />
       <EvalMetricsPanel
         benchmarkId={id}
         benchmarkName={benchmark.benchmark_name}

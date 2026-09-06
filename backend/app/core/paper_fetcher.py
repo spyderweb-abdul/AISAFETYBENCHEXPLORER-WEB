@@ -13,6 +13,8 @@ import logging
 import random
 import re
 import time
+from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -23,6 +25,10 @@ CROSSREF_API_URL = "https://api.crossref.org/works/{doi}"
 SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper/{paper_id}"
 
 _HTTP_TIMEOUT = 20.0
+
+
+class SemanticScholarKeyRejectedError(RuntimeError):
+    """The configured API key was rejected; do not retry anonymously."""
 
 
 def _clean_arxiv_id(value: str) -> str:
@@ -143,6 +149,8 @@ def _fetch_doi_crossref(clean_doi: str) -> dict[str, str]:
             "abstract": abstract,
             "authors": authors,
             "published": published,
+            "venue": (message.get("container-title") or [""])[0],
+            "crossref_citation_count": message.get("is-referenced-by-count"),
             "url": f"https://doi.org/{clean_doi}",
             "fetch_ok": bool(title),
         }
@@ -175,6 +183,7 @@ def _fetch_doi_datacite(clean_doi: str) -> dict[str, str]:
             "abstract": abstract,
             "authors": authors,
             "published": published,
+            "venue": attrs.get("publisher") or "",
             "url": f"https://doi.org/{clean_doi}",
             "fetch_ok": bool(title),
         }
@@ -222,9 +231,13 @@ def _semantic_scholar_backoff_sleep(attempt: int) -> None:
 
 def _semantic_scholar_request_with_retry(do_request, log_label: str, api_key: str = "") -> httpx.Response:
     """Runs a Semantic Scholar request with:
-    - 403 (bad/rejected API key) -> one retry without the key.
+    - 403 with a configured key -> fail fast without an anonymous retry.
     - 429 (rate limited) -> exponential backoff retry, up to 3 attempts total.
     Raises the last exception/HTTP error if all attempts are exhausted.
+
+    A rejected configured key is an authentication/configuration problem, not
+    a reason to fall back to the shared anonymous quota. In bulk refreshes,
+    that fallback turns one bad key into repeated 429s and unnecessary delay.
     """
     last_exc = None
     max_attempts = 3
@@ -235,10 +248,13 @@ def _semantic_scholar_request_with_retry(do_request, log_label: str, api_key: st
 
             if resp.status_code == 403 and api_key:
                 logger.warning(
-                    "Semantic Scholar rejected API key (403) for %s; retrying unauthenticated.",
+                    "Semantic Scholar rejected configured API key (403) for %s; "
+                    "skipping anonymous fallback.",
                     log_label,
                 )
-                resp = do_request(use_key=False)
+                raise SemanticScholarKeyRejectedError(
+                    "Semantic Scholar rejected the configured API key."
+                )
 
             if resp.status_code == 429:
                 logger.warning(
@@ -252,6 +268,8 @@ def _semantic_scholar_request_with_retry(do_request, log_label: str, api_key: st
             resp.raise_for_status()
             return resp
 
+        except SemanticScholarKeyRejectedError:
+            raise
         except Exception as exc:
             last_exc = exc
             if attempt < max_attempts - 1:
@@ -269,13 +287,9 @@ def fetch_semantic_scholar_citation_count(title_or_doi: str, api_key: str = "") 
     (1 request/second, frequent 429s) to the much higher authenticated tier.
     Get a free key at https://www.semanticscholar.org/product/api.
 
-    If the key is rejected (403 -- "the API key you've sent is incorrect",
-    per Semantic Scholar's own FAQ), automatically retries once without any
-    key, falling back to the public unauthenticated tier rather than failing
-    the whole lookup. Also retries on 429 with exponential backoff (up to 3
-    attempts total) instead of failing immediately on rate limits. This keeps
-    extraction working end-to-end even with a misconfigured/not-yet-activated
-    key or transient rate limiting.
+    A rejected configured key fails fast so callers can use a different
+    source rather than exhausting the shared anonymous quota. 429 responses
+    retry with exponential backoff (up to 3 attempts total).
     """
 
     def _do_request(use_key: bool) -> httpx.Response:
@@ -305,8 +319,8 @@ def fetch_semantic_scholar_paper(identifier: str, api_key: str = "") -> dict[str
     Scholar, which indexes far more sources than Crossref or DataCite alone
     (it aggregates arXiv, DOI-registered venues, and many preprint servers).
 
-    Same 403-retry-without-key fallback as fetch_semantic_scholar_citation_count,
-    plus 429 retry with exponential backoff.
+    A rejected configured key fails fast; 429 responses retry with exponential
+    backoff.
     """
     try:
         paper_id = identifier
@@ -317,7 +331,7 @@ def fetch_semantic_scholar_paper(identifier: str, api_key: str = "") -> dict[str
         def _do_request(use_key: bool) -> httpx.Response:
             headers = {"x-api-key": api_key} if (use_key and api_key) else {}
             return httpx.get(
-                SEMANTIC_SCHOLAR_URL.format(paper_id=paper_id),
+                SEMANTIC_SCHOLAR_URL.format(paper_id=quote(paper_id, safe=":")),
                 params={"fields": "title,abstract,authors,year,citationCount,externalIds,openAccessPdf"},
                 timeout=_HTTP_TIMEOUT,
                 follow_redirects=True,
@@ -374,12 +388,133 @@ def fetch_source(source_type: str, source_value: str, semantic_scholar_api_key: 
         if ss_result.get("fetch_ok"):
             result = ss_result
 
-    if result.get("fetch_ok") and result.get("citation_count") is None:
-        title_or_doi = result.get("title") or result.get("doi") or source_value
+    return result
+
+
+def resolve_paper_metadata(
+    source_type: str | None,
+    source_value: str | None,
+    *,
+    fetched: dict[str, Any] | None = None,
+    semantic_scholar_api_key: str = "",
+) -> dict[str, Any]:
+    """Resolve source-backed paper metadata for persistence.
+
+    Semantic Scholar is queried by a stable DOI or arXiv identifier whenever
+    one is available. That direct lookup is deliberately preferred over the
+    title-search helper used by older records: a title search can select a
+    different paper with a similar name. Crossref's reference count remains a
+    clearly-labelled fallback rather than being presented as a citation count.
+    """
+    base = fetched or {}
+    source_text = source_value or ""
+    if not base and source_type and source_value:
+        base = fetch_source(source_type, source_value, semantic_scholar_api_key=semantic_scholar_api_key)
+
+    doi = base.get("doi")
+    arxiv_id = base.get("arxiv_id")
+    if source_type == "doi" and source_text:
+        doi = _extract_clean_doi(source_text)
+    elif source_type == "arxiv_id" and source_text:
+        arxiv_id = _clean_arxiv_id(source_text)
+
+    if not doi and source_text:
+        doi_match = re.search(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", source_text, re.IGNORECASE)
+        if doi_match:
+            doi = _extract_clean_doi(doi_match.group(0))
+    if not arxiv_id and source_text:
+        arxiv_match = re.search(r"(\d{4}\.\d{4,5})(?:v\d+)?", source_text)
+        if arxiv_match:
+            arxiv_id = arxiv_match.group(1)
+
+    if doi and _ARXIV_DOI_RE.match(doi):
+        arxiv_id = _ARXIV_DOI_RE.match(doi).group(1)
+
+    # Citation refreshes for older records start from paper_link rather than
+    # an extraction source type. Fetch Crossref/DataCite or arXiv first so
+    # their bibliographic fields and cited-by value remain useful fallbacks.
+    if not base and doi:
+        base = fetch_doi(doi)
+    elif not base and arxiv_id:
+        base = fetch_arxiv(arxiv_id)
+
+    result: dict[str, Any] = {
+        "fetch_ok": bool(base.get("fetch_ok")),
+        "doi": doi,
+        "arxiv_id": arxiv_id,
+        "canonical_title": base.get("title") or "",
+        "authors": base.get("authors") or "",
+        "venue": base.get("venue") or "",
+        "publication_date": base.get("published") or "",
+        "is_open_access": None,
+        "open_access_url": base.get("url") or "",
+        "metadata_source": base.get("source") or None,
+        "citation_count": None,
+        "citation_source": None,
+        "error": base.get("error"),
+    }
+
+    paper_id = f"DOI:{doi}" if doi else (f"ARXIV:{arxiv_id}" if arxiv_id else None)
+    if paper_id:
+        try:
+            def _do_request(use_key: bool) -> httpx.Response:
+                headers = {"x-api-key": semantic_scholar_api_key} if (use_key and semantic_scholar_api_key) else {}
+                return httpx.get(
+                    SEMANTIC_SCHOLAR_URL.format(paper_id=quote(paper_id, safe=":")),
+                    params={
+                        "fields": (
+                            "paperId,title,authors,venue,publicationVenue,publicationDate,year,"
+                            "externalIds,isOpenAccess,openAccessPdf,citationCount"
+                        )
+                    },
+                    timeout=_HTTP_TIMEOUT,
+                    follow_redirects=True,
+                    headers=headers,
+                )
+
+            data = _semantic_scholar_request_with_retry(
+                _do_request, log_label=paper_id, api_key=semantic_scholar_api_key,
+            ).json()
+            external_ids = data.get("externalIds") or {}
+            oa_pdf = data.get("openAccessPdf") or {}
+            publication_venue = data.get("publicationVenue") or {}
+            result.update(
+                fetch_ok=bool(data.get("title")),
+                doi=external_ids.get("DOI") or doi,
+                arxiv_id=external_ids.get("ArXiv") or arxiv_id,
+                semantic_scholar_paper_id=data.get("paperId"),
+                canonical_title=data.get("title") or result["canonical_title"],
+                authors=", ".join(a.get("name", "") for a in data.get("authors", []) if a.get("name")),
+                venue=publication_venue.get("name") or data.get("venue") or result["venue"],
+                publication_date=data.get("publicationDate") or data.get("year") or result["publication_date"],
+                is_open_access=data.get("isOpenAccess"),
+                open_access_url=oa_pdf.get("url") or result["open_access_url"],
+                metadata_source="Semantic Scholar",
+                citation_count=data.get("citationCount"),
+                citation_source="Semantic Scholar",
+                error=None,
+            )
+            return result
+        except SemanticScholarKeyRejectedError:
+            result["semantic_scholar_key_rejected"] = True
+            result["error"] = "Semantic Scholar rejected the configured API key."
+        except Exception as exc:
+            logger.warning("Semantic Scholar metadata lookup failed for %s: %s", paper_id, exc)
+            result["error"] = str(exc)
+
+    if base.get("citation_count") is not None:
+        result["citation_count"] = base["citation_count"]
+        result["citation_source"] = "Semantic Scholar search"
+    elif base.get("crossref_citation_count") is not None:
+        result["citation_count"] = base["crossref_citation_count"]
+        result["citation_source"] = "Crossref cited-by count"
+    elif source_text and not result.get("semantic_scholar_key_rejected"):
         citation_count = fetch_semantic_scholar_citation_count(
-            title_or_doi, api_key=semantic_scholar_api_key
+            source_text, api_key=semantic_scholar_api_key,
         )
         if citation_count is not None:
             result["citation_count"] = citation_count
-
+            result["citation_source"] = "Semantic Scholar search"
+    if result["citation_count"] is not None:
+        result["error"] = None
     return result

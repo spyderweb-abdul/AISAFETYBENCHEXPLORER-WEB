@@ -1,9 +1,11 @@
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 from typing import List
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.languages import canonical_language_name
 
 
 class CreatedBy(str, Enum):
@@ -52,13 +54,31 @@ class EntryModality(str, Enum):
     entry_tuples = "Entry Tuples"
 
 class LanguageSupport(str, Enum):
-    en = "en"
-    zh = "zh"
-    ar = "ar"
-    fr = "fr"
-    hi = "hi"
-    ko = "ko"
+    english = "English"
+    chinese = "Chinese"
+    arabic = "Arabic"
+    french = "French"
+    hindi = "Hindi"
+    korean = "Korean"
     multilingual = "Multilingual"
+
+
+def _normalize_language_values(value: Any) -> Any:
+    """Accept legacy ISO codes on input while always exposing full names."""
+    if value is None:
+        return value
+    values = [value] if isinstance(value, str) else value
+    normalized = []
+    invalid = []
+    for item in values:
+        name = canonical_language_name(item)
+        if name is None:
+            invalid.append(str(item))
+        elif name not in normalized:
+            normalized.append(name)
+    if invalid:
+        raise ValueError(f"Unsupported language value(s): {', '.join(invalid)}")
+    return normalized
 
 class BenchmarkBase(BaseModel):
     benchmark_name: str = Field(..., max_length=255)
@@ -83,6 +103,11 @@ class BenchmarkBase(BaseModel):
     dataset_repository: Optional[str] = None
     paper_link: Optional[str] = None
 
+    @field_validator("language_support", mode="before")
+    @classmethod
+    def normalize_language_support(cls, value: Any) -> Any:
+        return _normalize_language_values(value)
+
 class BenchmarkEntry(BaseModel):
     benchmark_name: str
     task_type: List[str]
@@ -91,6 +116,11 @@ class BenchmarkEntry(BaseModel):
     language_support: List[LanguageSupport]
     complexity_level: str
     integration_option: str
+
+    @field_validator("language_support", mode="before")
+    @classmethod
+    def normalize_language_support(cls, value: Any) -> Any:
+        return _normalize_language_values(value)
 
 class BenchmarkCreate(BenchmarkBase):
     pass
@@ -121,6 +151,11 @@ class BenchmarkUpdate(BaseModel):
     dataset_repository: Optional[str] = None
     paper_link: Optional[str] = None
 
+    @field_validator("language_support", mode="before")
+    @classmethod
+    def normalize_language_support(cls, value: Any) -> Any:
+        return _normalize_language_values(value)
+
 
 class BenchmarkOut(BenchmarkBase):
     model_config = ConfigDict(from_attributes=True)
@@ -137,3 +172,19 @@ class BenchmarkOut(BenchmarkBase):
     safety_dimensions: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class BenchmarkPageOut(BaseModel):
+    """Admin catalogue page with a stable total for server-side pagination."""
+
+    items: list[BenchmarkOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class BenchmarkReextractRequest(BaseModel):
+    """Model is explicit so re-extraction never silently uses a default."""
+
+    model_used: str = Field(..., min_length=3, max_length=100)

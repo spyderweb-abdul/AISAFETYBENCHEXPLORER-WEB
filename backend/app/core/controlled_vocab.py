@@ -14,6 +14,7 @@
 # changed.
 
 from app.core.use_case_classifier import USE_CASE_CATEGORIES as USE_CASES
+from app.core.languages import LANGUAGE_SUPPORT
 
 KNOWN_TASK_TYPES = [
     "Safety", "Jailbreak", "Red Teaming", "Bias", "Hallucination", "Toxicity",
@@ -41,4 +42,3 @@ DEV_PURPOSE = ["Eval", "Train", "Train & Eval"]
 INTEGRATION_OPTION = ["API", "Export", "API & Export", "NA"]
 COMPLEXITY_LEVEL = ["Popular", "High", "Medium", "Low", "Unknown"]
 CODE_DATASET = ["Yes", "No"]
-LANGUAGE_SUPPORT = ["en", "zh", "ar", "fr", "hi", "ko", "Multilingual"]

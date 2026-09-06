@@ -1,13 +1,3 @@
-# Destination path: backend/app/core/celery_app.py
-# Replaces the existing file in full.
-#
-# CHANGE (Phase 6 item 1, this session): added a weekly Beat schedule
-# entry for the new refresh_all_citation_counts task (see tasks.py).
-# Scheduled for Sunday 04:00 UTC, one hour after the existing
-# refresh-all-repo-stats-weekly job (03:00 UTC), so the two weekly
-# jobs don't compete for the same worker slot at the same instant.
-# No other configuration changed.
-
 """
 app/core/celery_app.py
 

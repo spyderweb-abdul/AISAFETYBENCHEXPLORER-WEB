@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import uuid
+from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.orm import Notification, User
-from app.schemas.notification import NotificationOut
+from app.schemas.notification import NotificationOut, NotificationPage
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -32,6 +33,36 @@ def list_notifications(
     if unread_only:
         q = q.filter(Notification.is_read.is_(False))
     return q.order_by(Notification.created_at.desc()).limit(limit).all()
+
+
+@router.get("/page", response_model=NotificationPage)
+def list_notification_page(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    unread_only: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return a bounded page of the current user's notification trail."""
+    q = db.query(Notification).filter(Notification.user_id == current_user.id)
+    if unread_only:
+        q = q.filter(Notification.is_read.is_(False))
+
+    total = q.count()
+    total_pages = max(1, ceil(total / page_size))
+    items = (
+        q.order_by(Notification.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return NotificationPage(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/unread-count")

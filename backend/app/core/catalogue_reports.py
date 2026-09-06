@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
+from app.core.languages import canonical_language_name
 from app.core.safety_dimension_classifier import build_research_gap_heatmap
 
 
@@ -51,6 +52,7 @@ def _category_rows(
     limit: int | None = None,
     single_value: bool = False,
     label_map: dict[str, str] | None = None,
+    value_normalizer: Callable[[str], str | None] | None = None,
 ) -> list[dict]:
     counts: Counter[str] = Counter()
     display: dict[str, str] = {}
@@ -63,6 +65,8 @@ def _category_rows(
             cleaned = _clean(value)
             if not cleaned:
                 continue
+            if value_normalizer:
+                cleaned = value_normalizer(cleaned) or cleaned
             normalized = cleaned.casefold()
             if normalized in seen:
                 continue
@@ -113,7 +117,8 @@ def _publication_rows(benchmarks: list[Any]) -> tuple[list[dict], int]:
 
     rows = []
     previous: int | None = None
-    for year in sorted(counts):
+    years = range(min(counts), max(counts) + 1) if counts else []
+    for year in years:
         count = counts[year]
         change = None if previous in (None, 0) else round(((count - previous) / previous) * 100, 1)
         rows.append({"year": year, "count": count, "year_over_year_percent": change})
@@ -263,7 +268,13 @@ def build_catalogue_reports(benchmarks: Iterable[Any], repo_stats: Iterable[Any]
         "citation_leaders": _citation_leaders(records),
         "repository_health": repository_health,
         "github_star_distribution": github_star_distribution,
-        "language_coverage": _category_rows(records, "language_support", total=total, limit=20),
+        "language_coverage": _category_rows(
+            records,
+            "language_support",
+            total=total,
+            limit=20,
+            value_normalizer=canonical_language_name,
+        ),
         "modality_coverage": _category_rows(records, "entry_modalities", total=total, limit=20),
         "license_distribution": _category_rows(
             records, "license", total=total, limit=20, single_value=True

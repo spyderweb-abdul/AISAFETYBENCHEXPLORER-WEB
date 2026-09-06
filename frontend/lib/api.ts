@@ -137,6 +137,19 @@ export async function listBenchmarks(params?: Record<string, unknown>) {
   return data;
 }
 
+export interface BenchmarkPage {
+  items: Benchmark[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function listAdminBenchmarkPage(params?: Record<string, unknown>) {
+  const { data } = await api.get<BenchmarkPage>("/benchmarks/admin/page", { params });
+  return data;
+}
+
 export async function getBenchmark(id: string) {
   const { data } = await api.get(`/benchmarks/${id}`);
   return data;
@@ -160,6 +173,13 @@ export async function reviewBenchmark(id: string, approve: boolean, reviewer_not
   const { data } = await api.post(`/benchmarks/${id}/review`, {
     approve,
     reviewer_note,
+  });
+  return data;
+}
+
+export async function reextractBenchmark(id: string, modelUsed: string) {
+  const { data } = await api.post<ExtractionJob>(`/benchmarks/${id}/reextract`, {
+    model_used: modelUsed,
   });
   return data;
 }
@@ -309,14 +329,52 @@ export async function listRepoStatsForBenchmark(benchmarkId: string, history = f
 }
 
 export async function triggerRepoStatsRefresh(benchmarkId: string) {
-  const { data } = await api.post<{ task_id: string; benchmark_id: string }>(
+  const { data } = await api.post<{ task_id: string; citation_task_id: string; benchmark_id: string }>(
     `/repo-stats/benchmarks/${benchmarkId}/refresh`,
   );
   return data;
 }
 
 export async function triggerRepoStatsRefreshAll() {
-  const { data } = await api.post<{ task_id: string }>(`/repo-stats/refresh-all`);
+  const { data } = await api.post<{ task_id: string; citation_task_id: string }>(`/repo-stats/refresh-all`);
+  return data;
+}
+
+export interface PaperMetadata {
+  id: string;
+  benchmark_id: string;
+  doi: string | null;
+  arxiv_id: string | null;
+  semantic_scholar_paper_id: string | null;
+  canonical_title: string | null;
+  authors: string | null;
+  venue: string | null;
+  publication_date: string | null;
+  is_open_access: boolean | null;
+  open_access_url: string | null;
+  metadata_source: string | null;
+  citation_count: number | null;
+  citation_source: string | null;
+  citation_checked_at: string | null;
+  last_refreshed_at: string | null;
+  last_error: string | null;
+}
+
+export interface CitationSnapshot {
+  id: string;
+  benchmark_id: string;
+  citation_count: number;
+  source: string;
+  fetched_at: string;
+}
+
+export async function getPaperMetadata(benchmarkId: string) {
+  const { data } = await api.get<PaperMetadata | null>(`/paper-metadata/benchmarks/${benchmarkId}`);
+  return data;
+}
+
+export async function listCitationHistory(benchmarkId: string) {
+  const { data } = await api.get<CitationSnapshot[]>(`/paper-metadata/benchmarks/${benchmarkId}/citation-history`);
   return data;
 }
 
@@ -496,9 +554,24 @@ export interface AppNotification {
   created_at: string;
 }
 
-export async function listNotifications(unreadOnly = false) {
+export interface NotificationPage {
+  items: AppNotification[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function listNotifications(unreadOnly = false, limit = 50) {
   const { data } = await api.get("/notifications", {
-    params: unreadOnly ? { unread_only: true } : {},
+    params: { ...(unreadOnly ? { unread_only: true } : {}), limit },
+  });
+  return data;
+}
+
+export async function listNotificationPage(page = 1, pageSize = 20, unreadOnly = false) {
+  const { data } = await api.get<NotificationPage>("/notifications/page", {
+    params: { page, page_size: pageSize, ...(unreadOnly ? { unread_only: true } : {}) },
   });
   return data;
 }

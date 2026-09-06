@@ -89,7 +89,7 @@ export default function AppHeader() {
               {user.role}
             </span>
             <NotificationBell />
-            <button className="secondary" onClick={handleLogout}>Log out</button>
+            <button className="secondary site-logout" onClick={handleLogout}>Log out</button>
           </>
         ) : (
           <>

@@ -249,7 +249,7 @@ export default function BrowsePage() {
                 "Average metrics / Benchmark",
                 summary?.average_metrics_per_benchmark.toFixed(1),
               ],
-              ["Average Citation", summary?.average_citations.toFixed(1)],
+              ["Average citations", summary?.average_citations.toFixed(1)],
               [
                 "Code + Data Coverage",
                 summary ? `${summary.code_and_data_coverage_percent.toFixed(1)}%` : undefined,
@@ -386,34 +386,32 @@ export default function BrowsePage() {
         </div>
       </section>
 
-      <section className="browse-results-toolbar" aria-label="Catalogue actions">
-        <div aria-live="polite" aria-atomic="true">
-          <strong>{loading ? "Updating results" : `${benchmarks.length} benchmarks`}</strong>
-          <span>
-            {loading
-              ? " matching the current filters."
-              : hasActiveFilters
-                ? " match the current filters."
-                : " currently shown."}
-          </span>
-        </div>
-
-        <div className="browse-export-actions">
-          <span>Export published catalogue</span>
-          <a className="button secondary" href={exportPublicXlsxUrl()}>
-            Excel
-          </a>
-          <a className="button secondary" href={exportPublicCsvUrl()}>
-            CSV
-          </a>
-        </div>
-      </section>
-
       <section className="browse-table-card" aria-labelledby="browse-results-heading">
         <div className="browse-table-heading">
           <div>
             <h2 id="browse-results-heading">Benchmark records</h2>
-            <p>Scroll horizontally to inspect all metadata fields.</p>
+            <p className="browse-table-description">
+              <span aria-live="polite" aria-atomic="true">
+                <strong>{loading ? "Updating results" : `${benchmarks.length} benchmarks`}</strong>
+                {loading
+                  ? " matching the current filters"
+                  : hasActiveFilters
+                    ? " match the current filters"
+                    : " currently shown"}
+              </span>
+              <span aria-hidden="true"> · </span>
+              Scroll horizontally to inspect all metadata fields.
+            </p>
+          </div>
+
+          <div className="browse-export-actions">
+            <span>Export published catalogue</span>
+            <a className="button secondary" href={exportPublicXlsxUrl()}>
+              Excel
+            </a>
+            <a className="button secondary" href={exportPublicCsvUrl()}>
+              CSV
+            </a>
           </div>
         </div>
 

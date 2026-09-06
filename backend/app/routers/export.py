@@ -33,6 +33,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
+from app.core.languages import canonical_language_name
 from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.models.orm import Benchmark, EvalMetric
@@ -60,6 +61,10 @@ def _join(values: list[str]) -> str:
     return ", ".join(values) if values else ""
 
 
+def _join_languages(values: list[str]) -> str:
+    return _join([canonical_language_name(value) or value for value in values])
+
+
 def _sheet1_row(b: Benchmark) -> list:
     complexity_cell = b.complexity_level
     if b.complexity_justification:
@@ -69,7 +74,7 @@ def _sheet1_row(b: Benchmark) -> list:
         b.release_date.strftime("%Y-%m") if b.release_date else "",
         b.description, b.code_dataset, b.no_of_samples, b.created_by,
         _join(b.entry_modalities), b.dev_purpose, b.license,
-        _join(b.evaluation_metrics), complexity_cell, _join(b.language_support),
+        _join(b.evaluation_metrics), complexity_cell, _join_languages(b.language_support),
         b.integration_option, b.citation_range, b.cited_by,
         b.code_repository, b.dataset_repository, b.benchmark_paper_title, b.paper_link,
     ]

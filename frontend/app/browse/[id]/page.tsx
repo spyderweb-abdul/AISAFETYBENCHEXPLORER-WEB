@@ -14,6 +14,7 @@ import {
 import ComplexityBadge from "../../../components/ComplexityBadge";
 import { MetadataTag } from "../../../components/MetadataTags";
 import StalenessBadge from "../../../components/RepoStaleness";
+import PaperMetadataPanel from "../../../components/PaperMetadataPanel";
 
 function TagList({ values }: { values?: string[] | null }) {
   const cleanedValues = (values ?? []).map((value) => value.trim()).filter(Boolean);
@@ -115,6 +116,8 @@ export default function BrowseDetailPage() {
           </div>
         )}
       </section>
+
+      <PaperMetadataPanel benchmarkId={benchmark.id} />
 
       <section className="card" aria-labelledby="metrics-heading">
         <h2 id="metrics-heading" className="detail-section-title">Evaluation metrics catalogue</h2>
